@@ -40,13 +40,13 @@ function agentCommand(agentName: string): { shell: string; args: string[] } {
             args: ["--dangerously-skip-permissions", "--chrome"],
         };
     }
-    // Custom agents use claude with --agent-file
+    // Custom agents use claude with --agent
     return {
         shell: "claude",
         args: [
             "--dangerously-skip-permissions",
             "--chrome",
-            "--agent-file",
+            "--agent",
             agentName,
         ],
     };
