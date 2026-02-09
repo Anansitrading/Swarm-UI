@@ -1,14 +1,17 @@
 import { useEffect, useCallback } from "react";
 import { useLayoutStore } from "../stores/layoutStore";
+import { useTerminalStore } from "../stores/terminalStore";
 import type { LayoutMode } from "../types/terminal";
 
 /**
- * Hook for keyboard shortcuts to switch layout modes.
- * Ctrl+1: single, Ctrl+2: list, Ctrl+3: two_column, etc.
+ * Hook for keyboard shortcuts.
+ * Ctrl+1-5: layout modes, Ctrl+B: toggle sidebar, Ctrl+T: new terminal
  */
 export function useLayoutShortcuts() {
   const setMode = useLayoutStore((s) => s.setMode);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+  const addPane = useLayoutStore((s) => s.addPane);
+  const { spawnTerminal } = useTerminalStore();
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -31,8 +34,16 @@ export function useLayoutShortcuts() {
         e.preventDefault();
         toggleSidebar();
       }
+
+      // Ctrl+T: new terminal pane
+      if (e.key === "t") {
+        e.preventDefault();
+        spawnTerminal().then((info) => {
+          addPane({ id: `terminal-${info.id}`, type: "terminal", terminalId: info.id });
+        });
+      }
     },
-    [setMode, toggleSidebar]
+    [setMode, toggleSidebar, addPane, spawnTerminal]
   );
 
   useEffect(() => {
