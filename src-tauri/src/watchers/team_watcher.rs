@@ -95,15 +95,25 @@ pub async fn start_team_watcher(app: AppHandle) -> Result<(), AppError> {
 
 /// Extract team name from a path like ~/.claude/teams/{name}/config.json
 /// or ~/.claude/tasks/{name}/1.json
+/// Works with both `/` (Unix) and `\` (Windows) separators.
 fn extract_team_name(path: &str) -> Option<String> {
-    // Look for /teams/{name}/ or /tasks/{name}/
-    if let Some(idx) = path.find("/.claude/teams/") {
-        let after = &path[idx + "/.claude/teams/".len()..];
-        return after.split('/').next().map(|s| s.to_string());
+    // Normalize to forward slashes for consistent matching
+    let normalized = path.replace('\\', "/");
+    if let Some(idx) = normalized.find("/.claude/teams/") {
+        let after = &normalized[idx + "/.claude/teams/".len()..];
+        return after
+            .split('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
     }
-    if let Some(idx) = path.find("/.claude/tasks/") {
-        let after = &path[idx + "/.claude/tasks/".len()..];
-        return after.split('/').next().map(|s| s.to_string());
+    if let Some(idx) = normalized.find("/.claude/tasks/") {
+        let after = &normalized[idx + "/.claude/tasks/".len()..];
+        return after
+            .split('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
     }
     None
 }

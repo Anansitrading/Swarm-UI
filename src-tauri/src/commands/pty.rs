@@ -28,9 +28,7 @@ pub async fn pty_spawn(
         })
         .map_err(|e| AppError::Pty(e.to_string()))?;
 
-    let shell = config
-        .shell
-        .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
+    let shell = config.shell.unwrap_or_else(|| default_shell());
 
     let mut cmd = CommandBuilder::new(&shell);
     if let Some(args) = &config.args {
@@ -221,6 +219,18 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
     result
+}
+
+/// Return the platform-appropriate default shell
+fn default_shell() -> String {
+    #[cfg(unix)]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".to_string())
+    }
 }
 
 fn base64_decode(data: &str) -> Result<Vec<u8>, AppError> {

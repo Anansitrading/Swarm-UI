@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use serde::Serialize;
-use std::fs;
+use sysinfo::System;
 
 #[derive(Debug, Serialize)]
 pub struct ProcessInfo {
@@ -9,59 +9,69 @@ pub struct ProcessInfo {
     pub cwd: String,
 }
 
-/// Find all running Claude Code processes by scanning /proc
+/// Find all running Claude Code processes (cross-platform via sysinfo)
 #[tauri::command]
 pub async fn find_claude_processes() -> Result<Vec<ProcessInfo>, AppError> {
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
     let mut processes = Vec::new();
 
-    let proc_dir = fs::read_dir("/proc")?;
-    for entry in proc_dir.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
+    for (pid, process) in sys.processes() {
+        let cmd_parts: Vec<&str> = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_str().unwrap_or(""))
+            .collect();
+        let cmdline = cmd_parts.join(" ");
 
-        // Only numeric directories (PIDs)
-        let pid: u32 = match name_str.parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        let cmdline_path = entry.path().join("cmdline");
-        let cwd_path = entry.path().join("cwd");
-
-        let cmdline = match fs::read_to_string(&cmdline_path) {
-            Ok(c) => c.replace('\0', " ").trim().to_string(),
-            Err(_) => continue,
-        };
-
-        // Check if this is a Claude-related process
         if !cmdline.contains("claude") && !cmdline.contains("Claude") {
             continue;
         }
 
-        let cwd = fs::read_link(&cwd_path)
+        let cwd = process
+            .cwd()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        processes.push(ProcessInfo { pid, cmdline, cwd });
+        processes.push(ProcessInfo {
+            pid: pid.as_u32(),
+            cmdline,
+            cwd,
+        });
     }
 
     Ok(processes)
 }
 
-/// Kill a process by PID (SIGTERM, then SIGKILL after grace period)
+/// Kill a process by PID (cross-platform)
 #[tauri::command]
 pub async fn kill_process(pid: u32, force: Option<bool>) -> Result<(), AppError> {
-    let signal = if force.unwrap_or(false) {
-        libc::SIGKILL
-    } else {
-        libc::SIGTERM
-    };
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let result = unsafe { libc::kill(pid as i32, signal) };
-    if result != 0 {
-        return Err(AppError::Internal(format!(
-            "Failed to send signal to PID {pid}"
-        )));
+    let sysinfo_pid = sysinfo::Pid::from_u32(pid);
+    let process = sys
+        .process(sysinfo_pid)
+        .ok_or_else(|| AppError::NotFound(format!("Process {pid} not found")))?;
+
+    if force.unwrap_or(false) {
+        process.kill();
+    } else {
+        // On Unix this sends SIGTERM, on Windows it terminates the process
+        #[cfg(unix)]
+        {
+            let result = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            if result != 0 {
+                return Err(AppError::Internal(format!(
+                    "Failed to send SIGTERM to PID {pid}"
+                )));
+            }
+        }
+        #[cfg(windows)]
+        {
+            process.kill();
+        }
     }
 
     Ok(())

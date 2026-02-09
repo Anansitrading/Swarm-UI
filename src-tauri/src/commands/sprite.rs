@@ -154,7 +154,9 @@ pub async fn sprite_ws_kill(id: String, state: State<'_, AppState>) -> Result<()
     crate::sprites_ws::ws_kill(&id, &state.ws_state).await
 }
 
-/// List exec sessions running on a sprite
+/// List exec sessions running on a sprite.
+/// NOTE: Sprite VMs are always Linux, so Unix shell commands and path parsing
+/// with forward slashes are intentional here. This runs from any host OS.
 #[tauri::command]
 pub async fn sprite_list_sessions(
     name: String,
