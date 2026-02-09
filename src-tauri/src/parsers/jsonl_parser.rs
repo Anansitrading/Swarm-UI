@@ -16,9 +16,8 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
     let mut total_output_tokens: u64 = 0;
     let mut session_id = String::new();
     let mut git_branch = None;
+    let mut cwd = None;
     let mut last_timestamp: u64 = 0;
-    let mut last_role = String::new();
-    let mut last_tool_name = None;
     let mut has_pending_tool_use = false;
 
     for line in reader.lines() {
@@ -43,13 +42,35 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
             }
         }
 
+        // Extract cwd from entry
+        if cwd.is_none() {
+            if let Some(c) = &entry.cwd {
+                if !c.is_empty() {
+                    cwd = Some(c.clone());
+                }
+            }
+        }
+
+        // Extract git branch from entry
+        if git_branch.is_none() {
+            if let Some(b) = &entry.git_branch {
+                if !b.is_empty() {
+                    git_branch = Some(b.clone());
+                }
+            }
+        }
+
         // Extract timestamp
         if let Some(ts) = &entry.timestamp {
-            if let Ok(t) = ts.parse::<u64>() {
-                last_timestamp = t;
-            } else if let Ok(t) = chrono_parse_unix(ts) {
+            if let Ok(t) = chrono_parse_unix(ts) {
                 last_timestamp = t;
             }
+        }
+
+        // Skip non-message entries (progress, file-history-snapshot, etc.)
+        let entry_type = entry.entry_type.as_deref().unwrap_or("");
+        if entry_type != "user" && entry_type != "assistant" && entry_type != "tool" {
+            continue;
         }
 
         if let Some(msg) = &entry.message {
@@ -71,15 +92,15 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
 
             // Status detection from message role and content
             if let Some(role) = &msg.role {
-                last_role = role.clone();
-
                 match role.as_str() {
                     "assistant" => {
                         // Check content for tool_use blocks
                         if let Some(content) = &msg.content {
                             if let Some(arr) = content.as_array() {
                                 for block in arr {
-                                    if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
+                                    if let Some(block_type) =
+                                        block.get("type").and_then(|t| t.as_str())
+                                    {
                                         match block_type {
                                             "tool_use" => {
                                                 let name = block
@@ -87,9 +108,9 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
                                                     .and_then(|n| n.as_str())
                                                     .unwrap_or("unknown")
                                                     .to_string();
-                                                last_tool_name = Some(name.clone());
                                                 has_pending_tool_use = true;
-                                                status = SessionStatus::ExecutingTool { name };
+                                                status =
+                                                    SessionStatus::ExecutingTool { name };
                                             }
                                             "thinking" => {
                                                 status = SessionStatus::Thinking;
@@ -119,15 +140,6 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
                 }
             }
         }
-
-        // Check for git branch in early entries
-        if git_branch.is_none() {
-            if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&line) {
-                if let Some(branch) = raw.get("gitBranch").and_then(|b| b.as_str()) {
-                    git_branch = Some(branch.to_string());
-                }
-            }
-        }
     }
 
     // Determine final status based on timing
@@ -138,7 +150,10 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
 
     // If last activity was >90 seconds ago, consider idle
     if last_timestamp > 0 && (now - last_timestamp) > 90 {
-        if matches!(status, SessionStatus::Thinking | SessionStatus::ExecutingTool { .. }) {
+        if matches!(
+            status,
+            SessionStatus::Thinking | SessionStatus::ExecutingTool { .. }
+        ) {
             status = SessionStatus::Idle;
         }
     }
@@ -151,7 +166,10 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
-    let project_path = if project_dir.starts_with('-') {
+    // Use cwd if available, otherwise decode from directory name
+    let project_path = if let Some(ref c) = cwd {
+        c.clone()
+    } else if project_dir.starts_with('-') {
         project_dir.replacen('-', "/", project_dir.len())
     } else {
         project_dir.to_string()
@@ -169,28 +187,66 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
         output_tokens,
         total_output_tokens,
         git_branch,
+        cwd,
     })
 }
 
 /// Parse ISO timestamp or unix timestamp string to epoch seconds
 fn chrono_parse_unix(ts: &str) -> Result<u64, ()> {
-    // Try parsing as ISO 8601
-    // Simple heuristic: if it contains 'T', try ISO parse
+    // Try ISO 8601: "2026-01-15T10:30:00.000Z"
     if ts.contains('T') {
-        // Basic ISO parse without chrono dep
-        // Format: 2026-01-15T10:30:00.000Z
-        let parts: Vec<&str> = ts.split('T').collect();
-        if parts.len() == 2 {
-            // Just use the file modification time as fallback
-            return Err(());
+        // Parse simple ISO format: YYYY-MM-DDTHH:MM:SS.sssZ
+        // We just need epoch seconds, not full datetime parsing
+        let date_part = ts.split('T').next().unwrap_or("");
+        let time_part = ts
+            .split('T')
+            .nth(1)
+            .unwrap_or("")
+            .trim_end_matches('Z')
+            .split('.')
+            .next()
+            .unwrap_or("");
+
+        let date_parts: Vec<&str> = date_part.split('-').collect();
+        let time_parts: Vec<&str> = time_part.split(':').collect();
+
+        if date_parts.len() == 3 && time_parts.len() == 3 {
+            let year: i64 = date_parts[0].parse().map_err(|_| ())?;
+            let month: i64 = date_parts[1].parse().map_err(|_| ())?;
+            let day: i64 = date_parts[2].parse().map_err(|_| ())?;
+            let hour: i64 = time_parts[0].parse().map_err(|_| ())?;
+            let min: i64 = time_parts[1].parse().map_err(|_| ())?;
+            let sec: i64 = time_parts[2].parse().map_err(|_| ())?;
+
+            // Simplified epoch calculation (approximate, good enough for relative timing)
+            let days = (year - 1970) * 365 + (year - 1969) / 4 - (year - 1901) / 100
+                + (year - 1601) / 400;
+            let month_days: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+            let mday = if month >= 1 && month <= 12 {
+                month_days[(month - 1) as usize]
+            } else {
+                0
+            };
+            let is_leap =
+                (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            let leap_add = if is_leap && month > 2 { 1 } else { 0 };
+
+            let total_days = days + mday + day - 1 + leap_add;
+            let epoch = total_days * 86400 + hour * 3600 + min * 60 + sec;
+
+            if epoch > 0 {
+                return Ok(epoch as u64);
+            }
         }
+        return Err(());
     }
-    // Try as plain number (milliseconds)
-    if let Ok(ms) = ts.parse::<u64>() {
-        if ms > 1_000_000_000_000 {
-            return Ok(ms / 1000); // milliseconds to seconds
+
+    // Try as plain number (milliseconds or seconds)
+    if let Ok(num) = ts.parse::<u64>() {
+        if num > 1_000_000_000_000 {
+            return Ok(num / 1000); // milliseconds to seconds
         }
-        return Ok(ms);
+        return Ok(num);
     }
     Err(())
 }

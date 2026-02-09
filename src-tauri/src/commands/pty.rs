@@ -2,9 +2,8 @@ use crate::error::AppError;
 use crate::state::{AppState, PtyInfo, PtyInstance, PtySpawnConfig};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::Read;
-use std::sync::Arc;
 use std::thread;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 /// Spawn a new PTY process and return its info.
@@ -196,7 +195,6 @@ pub async fn pty_list(state: State<'_, AppState>) -> Result<Vec<PtyInfo>, AppErr
 
 // Simple base64 encode/decode to avoid adding another dep
 fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {

@@ -17,7 +17,7 @@ impl SessionStatus {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Thinking => "Thinking",
-            Self::ExecutingTool { name } => "Executing Tool",
+            Self::ExecutingTool { .. } => "Executing Tool",
             Self::AwaitingApproval => "Awaiting Approval",
             Self::Waiting => "Waiting for Input",
             Self::Idle => "Idle",
@@ -53,6 +53,7 @@ pub struct SessionInfo {
     pub output_tokens: u64,
     pub total_output_tokens: u64,
     pub git_branch: Option<String>,
+    pub cwd: Option<String>,
 }
 
 /// Activity entry for the recent activity list
@@ -85,6 +86,9 @@ pub struct JsonlEntry {
     pub timestamp: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: Option<String>,
+    #[serde(rename = "gitBranch")]
+    pub git_branch: Option<String>,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

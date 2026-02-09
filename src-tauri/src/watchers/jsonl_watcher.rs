@@ -1,9 +1,5 @@
 use crate::error::AppError;
-use crate::parsers::jsonl_parser::IncrementalReader;
-use crate::parsers::session_types::SessionInfo;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
-use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -48,8 +44,6 @@ pub async fn start_session_watcher(app: AppHandle) -> Result<(), AppError> {
         }
 
         tracing::info!("Watching {} for JSONL changes", claude_dir.display());
-
-        let mut readers: HashMap<String, IncrementalReader> = HashMap::new();
 
         loop {
             match rx.recv_timeout(Duration::from_secs(5)) {

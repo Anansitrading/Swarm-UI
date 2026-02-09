@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::process::Command;
 
 #[derive(Debug, Serialize)]
