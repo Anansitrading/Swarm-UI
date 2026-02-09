@@ -1,115 +1,714 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useLayoutStore } from "../../stores/layoutStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { SessionDetail } from "../session/SessionDetail";
 import { SpriteGrid } from "../sprite/SpriteGrid";
-import { FileChangeList } from "../diff/FileChangeList";
+import { DiffViewer } from "../diff/DiffViewer";
 import type { LayoutMode } from "../../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
 
+interface GitFileChange {
+    path: string;
+    status: string;
+    staged: boolean;
+}
+
+interface GitCommit {
+    hash: string;
+    short_hash: string;
+    author: string;
+    time_ago: string;
+    subject: string;
+}
+
+interface FileDiffContent {
+    diff: string;
+    old_content: string;
+    new_content: string;
+}
+
 function gridStyle(mode: LayoutMode): React.CSSProperties {
-  switch (mode) {
-    case "single":
-      return { gridTemplateColumns: "1fr" };
-    case "list":
-      return { gridTemplateColumns: "1fr" };
-    case "two_column":
-      return { gridTemplateColumns: "1fr 1fr" };
-    case "three_column":
-      return { gridTemplateColumns: "1fr 1fr 1fr" };
-    case "sprite_grid":
-      return {}; // SpriteGrid handles its own layout
-  }
+    switch (mode) {
+        case "single":
+            return { gridTemplateColumns: "1fr" };
+        case "list":
+            return { gridTemplateColumns: "1fr" };
+        case "two_column":
+            return { gridTemplateColumns: "1fr 1fr" };
+        case "three_column":
+            return { gridTemplateColumns: "1fr 1fr 1fr" };
+        case "sprite_grid":
+            return {};
+    }
 }
 
 export function PaneGrid() {
-  const { mode, panes, addPane } = useLayoutStore();
-  const { selectedSessionId, sessions } = useSessionStore();
-  const { spawnTerminal } = useTerminalStore();
+    const { mode, panes, addPane, setMode, updatePane } = useLayoutStore();
+    const { selectedSessionId, sessions, selectSession } = useSessionStore();
+    const { spawnTerminal } = useTerminalStore();
+    const [diffState, setDiffState] = useState<{
+        repoPath: string;
+        changes: GitFileChange[];
+        commits: GitCommit[];
+        selectedFile: string | null;
+        oldContent: string;
+        newContent: string;
+    } | null>(null);
 
-  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+    const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
-  const handleOpenTerminal = useCallback(
-    async (cwd: string) => {
-      const info = await spawnTerminal({ cwd });
-      addPane({ id: `terminal-${info.id}`, type: "terminal", terminalId: info.id });
-    },
-    [spawnTerminal, addPane]
-  );
-
-  const handleKillProcess = useCallback(async (pid: number) => {
-    try {
-      await invoke("kill_process", { pid, force: false });
-    } catch (e) {
-      console.error("Failed to kill process:", e);
-    }
-  }, []);
-
-  if (mode === "sprite_grid") {
-    return (
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <SpriteGrid />
-      </div>
+    const handleOpenTerminal = useCallback(
+        async (cwd: string) => {
+            try {
+                const info = await spawnTerminal({ cwd });
+                // Switch to list mode (keeps panes intact) so session + terminal
+                // show side by side
+                if (mode === "single") {
+                    setMode("list", true);
+                }
+                // Ensure pane 0 has the terminal ID
+                if (panes.length > 0) {
+                    updatePane(0, { terminalId: info.id, type: "terminal" });
+                } else {
+                    addPane({
+                        id: `terminal-${info.id}`,
+                        type: "terminal",
+                        terminalId: info.id,
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to open terminal:", e);
+            }
+        },
+        [spawnTerminal, addPane, mode, setMode, panes, updatePane],
     );
-  }
 
-  // In "list" mode, show session detail alongside panes
-  if (mode === "list" && selectedSession) {
-    return (
-      <div className="flex-1 min-h-0 grid grid-cols-2 gap-1 p-1 overflow-hidden">
-        {/* Session detail panel */}
-        <div className="min-h-0 rounded border border-swarm-border overflow-hidden">
-          <SessionDetail
-            session={selectedSession}
-            onOpenTerminal={handleOpenTerminal}
-            onKillProcess={handleKillProcess}
-          />
-        </div>
-        {/* Terminal panes */}
-        <div className="min-h-0 rounded border border-swarm-border overflow-hidden">
-          {panes.length > 0 && panes[0].type === "terminal" ? (
-            <TerminalPane ptyId={panes[0].terminalId} />
-          ) : (
-            <TerminalPane />
-          )}
-        </div>
-      </div>
+    const handleKillProcess = useCallback(async (pid: number) => {
+        try {
+            await invoke("kill_process", { pid, force: false });
+        } catch (e) {
+            console.error("Failed to kill process:", e);
+        }
+    }, []);
+
+    const handleBack = useCallback(() => {
+        selectSession(null);
+    }, [selectSession]);
+
+    const [diffError, setDiffError] = useState<string | null>(null);
+
+    const handleShowDiff = useCallback(async (repoPath: string) => {
+        if (!repoPath) {
+            setDiffError("No working directory available for this session.");
+            setTimeout(() => setDiffError(null), 3000);
+            return;
+        }
+        try {
+            // First check if it's a git repo by trying to get the branch
+            const branch = await invoke<string | null>("get_git_branch", {
+                path: repoPath,
+            });
+            if (branch === null) {
+                setDiffError(`Not a git repository: ${repoPath}`);
+                setTimeout(() => setDiffError(null), 3000);
+                return;
+            }
+            // Fetch changes (includes untracked) and recent commits in parallel
+            const [changes, commits] = await Promise.all([
+                invoke<GitFileChange[]>("get_git_diff", { repoPath }),
+                invoke<GitCommit[]>("get_git_log", { repoPath, count: 10 }),
+            ]);
+            if (changes.length === 0 && commits.length === 0) {
+                setDiffError("No changes, untracked files, or commits found.");
+                setTimeout(() => setDiffError(null), 3000);
+                return;
+            }
+            setDiffError(null);
+            setDiffState({
+                repoPath,
+                changes,
+                commits,
+                selectedFile: null,
+                oldContent: "",
+                newContent: "",
+            });
+        } catch (e) {
+            setDiffError(`Diff failed: ${e}`);
+            setTimeout(() => setDiffError(null), 4000);
+            console.error("Failed to get diff:", e);
+        }
+    }, []);
+
+    const handleSelectDiffFile = useCallback(
+        async (filePath: string, staged: boolean) => {
+            if (!diffState) return;
+            try {
+                const content = await invoke<FileDiffContent>("get_file_diff", {
+                    repoPath: diffState.repoPath,
+                    filePath,
+                    staged,
+                });
+                setDiffState((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              selectedFile: filePath,
+                              oldContent: content.old_content,
+                              newContent: content.new_content,
+                          }
+                        : null,
+                );
+            } catch (e) {
+                console.error("Failed to get file diff:", e);
+            }
+        },
+        [diffState],
     );
-  }
 
-  return (
-    <div
-      className="flex-1 min-h-0 grid gap-1 p-1 overflow-hidden"
-      style={gridStyle(mode)}
-    >
-      {panes.map((pane) => (
-        <div
-          key={pane.id}
-          className="min-h-0 rounded border border-swarm-border overflow-hidden"
-        >
-          {pane.type === "terminal" && (
-            <TerminalPane ptyId={pane.terminalId} />
-          )}
-          {pane.type === "sprite" && (
-            <TerminalPane
-              spawnConfig={{
-                shell: "sprite",
-                args: ["console", "-s", pane.spriteName || ""],
-              }}
-            />
-          )}
-          {pane.type === "diff" && (
-            <FileChangeList changes={[]} />
-          )}
-          {pane.type === "empty" && (
-            <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
-              Empty pane
+    if (mode === "sprite_grid") {
+        return (
+            <div className="flex-1 min-h-0 overflow-hidden">
+                <SpriteGrid />
             </div>
-          )}
+        );
+    }
+
+    // In "single" mode - if diff is open, show diff; if session selected, show detail; else terminal
+    if (mode === "single") {
+        if (diffState) {
+            return (
+                <div className="flex-1 min-h-0 flex overflow-hidden">
+                    <DiffSidebar
+                        changes={diffState.changes}
+                        commits={diffState.commits}
+                        selectedFile={diffState.selectedFile}
+                        onSelectFile={handleSelectDiffFile}
+                        onClose={() => setDiffState(null)}
+                    />
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        {diffState.selectedFile ? (
+                            <DiffViewer
+                                oldContent={diffState.oldContent}
+                                newContent={diffState.newContent}
+                                fileName={diffState.selectedFile}
+                            />
+                        ) : (
+                            <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
+                                Select a file to view diff
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        if (selectedSession) {
+            return (
+                <div className="flex-1 min-h-0 overflow-hidden relative">
+                    {diffError && <DiffErrorToast message={diffError} />}
+                    <SessionDetail
+                        session={selectedSession}
+                        onOpenTerminal={handleOpenTerminal}
+                        onKillProcess={handleKillProcess}
+                        onShowDiff={handleShowDiff}
+                        onBack={handleBack}
+                    />
+                </div>
+            );
+        }
+
+        // No session selected - show monitoring overview in single mode too
+        return (
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                <MonitoringOverview
+                    sessions={sessions}
+                    onOpenTerminal={handleOpenTerminal}
+                    onKillProcess={handleKillProcess}
+                    onShowDiff={handleShowDiff}
+                />
+            </div>
+        );
+    }
+
+    // In "list" mode - session detail + terminal side by side (like AgentHub)
+    if (mode === "list") {
+        if (diffState) {
+            return (
+                <div className="flex-1 min-h-0 flex overflow-hidden">
+                    <DiffSidebar
+                        changes={diffState.changes}
+                        commits={diffState.commits}
+                        selectedFile={diffState.selectedFile}
+                        onSelectFile={handleSelectDiffFile}
+                        onClose={() => setDiffState(null)}
+                    />
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        {diffState.selectedFile ? (
+                            <DiffViewer
+                                oldContent={diffState.oldContent}
+                                newContent={diffState.newContent}
+                                fileName={diffState.selectedFile}
+                            />
+                        ) : (
+                            <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
+                                Select a file to view diff
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        if (selectedSession) {
+            return (
+                <div className="flex-1 min-h-0 grid grid-cols-2 gap-0 overflow-hidden relative">
+                    {diffError && <DiffErrorToast message={diffError} />}
+                    <div className="min-h-0 border-r border-swarm-border overflow-hidden">
+                        <SessionDetail
+                            session={selectedSession}
+                            onOpenTerminal={handleOpenTerminal}
+                            onKillProcess={handleKillProcess}
+                            onShowDiff={handleShowDiff}
+                            onBack={handleBack}
+                        />
+                    </div>
+                    <div className="min-h-0 overflow-hidden">
+                        {panes.length > 0 && panes[0].terminalId ? (
+                            <TerminalPane ptyId={panes[0].terminalId} />
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full bg-swarm-bg gap-3">
+                                <span className="text-swarm-text-dim text-sm">
+                                    No terminal open
+                                </span>
+                                <button
+                                    onClick={() =>
+                                        handleOpenTerminal(
+                                            selectedSession.cwd ||
+                                                selectedSession.project_path,
+                                        )
+                                    }
+                                    className="px-4 py-2 text-xs bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
+                                >
+                                    Open Terminal
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // No session selected - show monitoring overview
+        return (
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                <MonitoringOverview
+                    sessions={sessions}
+                    onOpenTerminal={handleOpenTerminal}
+                    onKillProcess={handleKillProcess}
+                    onShowDiff={handleShowDiff}
+                />
+            </div>
+        );
+    }
+
+    // Multi-column modes - show session detail cards or terminals
+    return (
+        <div
+            className="flex-1 min-h-0 grid gap-1 p-1 overflow-hidden"
+            style={gridStyle(mode)}
+        >
+            {mode === "two_column" || mode === "three_column" ? (
+                // Show active/recent sessions as monitoring cards
+                <MultiSessionView
+                    mode={mode}
+                    sessions={sessions}
+                    onOpenTerminal={handleOpenTerminal}
+                    onKillProcess={handleKillProcess}
+                    onShowDiff={handleShowDiff}
+                />
+            ) : (
+                panes.map((pane) => (
+                    <div
+                        key={pane.id}
+                        className="min-h-0 rounded border border-swarm-border overflow-hidden"
+                    >
+                        {pane.type === "terminal" && (
+                            <TerminalPane ptyId={pane.terminalId} />
+                        )}
+                        {pane.type === "empty" && (
+                            <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
+                                Empty pane
+                            </div>
+                        )}
+                    </div>
+                ))
+            )}
         </div>
-      ))}
-    </div>
-  );
+    );
+}
+
+/** Shows multiple sessions as monitoring cards in 2/3 column layout */
+function MultiSessionView({
+    mode,
+    sessions,
+    onOpenTerminal,
+    onKillProcess,
+    onShowDiff,
+}: {
+    mode: LayoutMode;
+    sessions: import("../../types/session").SessionInfo[];
+    onOpenTerminal: (cwd: string) => void;
+    onKillProcess: (pid: number) => void;
+    onShowDiff: (repoPath: string) => void;
+}) {
+    const count = mode === "three_column" ? 3 : 2;
+    // Show the most recent sessions
+    const recentSessions = sessions.slice(0, count);
+
+    return (
+        <>
+            {recentSessions.map((session) => (
+                <div
+                    key={session.id}
+                    className="min-h-0 rounded border border-swarm-border overflow-hidden"
+                >
+                    <SessionDetail
+                        session={session}
+                        onOpenTerminal={onOpenTerminal}
+                        onKillProcess={onKillProcess}
+                        onShowDiff={onShowDiff}
+                    />
+                </div>
+            ))}
+            {/* Fill remaining slots with empty panes */}
+            {Array.from({
+                length: Math.max(0, count - recentSessions.length),
+            }).map((_, i) => (
+                <div
+                    key={`empty-${i}`}
+                    className="min-h-0 rounded border border-swarm-border overflow-hidden flex items-center justify-center text-swarm-text-dim text-sm"
+                >
+                    No session
+                </div>
+            ))}
+        </>
+    );
+}
+
+/** Overview grid showing all sessions as compact cards */
+function MonitoringOverview({
+    sessions,
+}: {
+    sessions: import("../../types/session").SessionInfo[];
+    onOpenTerminal?: (cwd: string) => void;
+    onKillProcess?: (pid: number) => void;
+    onShowDiff?: (repoPath: string) => void;
+}) {
+    const { selectSession, selectedSessionId } = useSessionStore();
+
+    if (sessions.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
+                No active sessions. Start a Claude Code session to monitor it
+                here.
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {sessions.slice(0, 9).map((session) => {
+                const name = session.project_path.split("/").pop() || "Unknown";
+                const isActive =
+                    session.status.type === "thinking" ||
+                    session.status.type === "executing_tool";
+
+                return (
+                    <button
+                        key={session.id}
+                        onClick={() =>
+                            selectSession(
+                                selectedSessionId === session.id
+                                    ? null
+                                    : session.id,
+                            )
+                        }
+                        className={`text-left p-3 rounded-lg border transition-colors ${
+                            isActive
+                                ? "border-swarm-accent/30 bg-swarm-accent/5"
+                                : "border-swarm-border bg-swarm-surface hover:border-swarm-accent/20"
+                        }`}
+                    >
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-swarm-text truncate">
+                                {name}
+                            </span>
+                            <StatusDot status={session.status} />
+                        </div>
+                        {session.git_branch && (
+                            <div className="text-[10px] text-swarm-accent mb-1">
+                                {session.git_branch}
+                            </div>
+                        )}
+                        {(session.context_tokens > 0 ||
+                            session.input_tokens > 0) && (
+                            <div className="mb-1">
+                                <div className="flex justify-between text-[10px] text-swarm-text-dim mb-0.5">
+                                    <span>
+                                        {formatTokens(
+                                            session.context_tokens ||
+                                                session.input_tokens,
+                                        )}
+                                        /{formatTokens(200000)}
+                                    </span>
+                                    <span>
+                                        {(
+                                            ((session.context_tokens ||
+                                                session.input_tokens) /
+                                                200000) *
+                                            100
+                                        ).toFixed(0)}
+                                        %
+                                    </span>
+                                </div>
+                                <div className="h-1 bg-swarm-border rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-swarm-accent rounded-full"
+                                        style={{
+                                            width: `${Math.min(((session.context_tokens || session.input_tokens) / 200000) * 100, 100)}%`,
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between text-[10px] text-swarm-text-dim">
+                            <span>
+                                {session.model
+                                    ? formatModel(session.model)
+                                    : ""}
+                            </span>
+                            <span>{formatTimeAgo(session.last_modified)}</span>
+                        </div>
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+function StatusDot({
+    status,
+}: {
+    status: import("../../types/session").SessionStatus;
+}) {
+    const colors: Record<string, string> = {
+        thinking: "bg-blue-400",
+        executing_tool: "bg-orange-400",
+        awaiting_approval: "bg-yellow-400",
+        waiting: "bg-blue-300",
+        idle: "bg-gray-400",
+        stopped: "bg-red-400",
+        unknown: "bg-gray-500",
+    };
+    const color = colors[status.type] || "bg-gray-500";
+    const isActive =
+        status.type === "thinking" || status.type === "executing_tool";
+
+    return (
+        <span className="relative flex h-2 w-2">
+            {isActive && (
+                <span
+                    className={`animate-ping absolute inline-flex h-full w-full rounded-full ${color} opacity-75`}
+                />
+            )}
+            <span
+                className={`relative inline-flex rounded-full h-2 w-2 ${color}`}
+            />
+        </span>
+    );
+}
+
+function DiffSidebar({
+    changes,
+    commits,
+    selectedFile,
+    onSelectFile,
+    onClose,
+}: {
+    changes: GitFileChange[];
+    commits: GitCommit[];
+    selectedFile: string | null;
+    onSelectFile: (path: string, staged: boolean) => void;
+    onClose: () => void;
+}) {
+    const trackedChanges = changes.filter((c) => c.status !== "untracked");
+    const untrackedFiles = changes.filter((c) => c.status === "untracked");
+
+    return (
+        <div className="w-64 flex flex-col bg-swarm-surface border-r border-swarm-border overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-swarm-border">
+                <span className="text-xs font-medium text-swarm-text">
+                    Git Status
+                </span>
+                <button
+                    onClick={onClose}
+                    className="text-swarm-text-dim hover:text-swarm-text text-xs"
+                >
+                    Close
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+                {/* Changed files section */}
+                {trackedChanges.length > 0 && (
+                    <div>
+                        <div className="px-3 py-1.5 text-[10px] font-medium text-swarm-accent uppercase tracking-wider bg-swarm-bg/50">
+                            Changes ({trackedChanges.length})
+                        </div>
+                        {trackedChanges.map((change) => (
+                            <button
+                                key={`${change.path}-${change.staged}`}
+                                onClick={() =>
+                                    onSelectFile(change.path, change.staged)
+                                }
+                                className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-swarm-accent/5 transition-colors ${
+                                    selectedFile === change.path
+                                        ? "bg-swarm-accent/10"
+                                        : ""
+                                }`}
+                            >
+                                <StatusIcon status={change.status} />
+                                <span className="truncate text-swarm-text">
+                                    {change.path.split("/").pop()}
+                                </span>
+                                {change.staged && (
+                                    <span className="text-[9px] text-green-400 shrink-0">
+                                        staged
+                                    </span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                {/* Untracked files section */}
+                {untrackedFiles.length > 0 && (
+                    <div>
+                        <div className="px-3 py-1.5 text-[10px] font-medium text-yellow-400 uppercase tracking-wider bg-swarm-bg/50">
+                            Untracked ({untrackedFiles.length})
+                        </div>
+                        {untrackedFiles.map((file) => (
+                            <button
+                                key={file.path}
+                                onClick={() => onSelectFile(file.path, false)}
+                                className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-swarm-accent/5 transition-colors ${
+                                    selectedFile === file.path
+                                        ? "bg-swarm-accent/10"
+                                        : ""
+                                }`}
+                            >
+                                <span className="text-[10px] font-mono font-bold text-cyan-400">
+                                    ?
+                                </span>
+                                <span className="truncate text-swarm-text">
+                                    {file.path.split("/").pop()}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                {/* Recent commits section */}
+                {commits.length > 0 && (
+                    <div>
+                        <div className="px-3 py-1.5 text-[10px] font-medium text-blue-400 uppercase tracking-wider bg-swarm-bg/50">
+                            Recent Commits ({commits.length})
+                        </div>
+                        {commits.map((commit) => (
+                            <div
+                                key={commit.hash}
+                                className="px-3 py-1.5 text-xs border-b border-swarm-border/30"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono text-swarm-accent text-[10px] shrink-0">
+                                        {commit.short_hash}
+                                    </span>
+                                    <span className="truncate text-swarm-text">
+                                        {commit.subject}
+                                    </span>
+                                </div>
+                                <div className="text-[10px] text-swarm-text-dim mt-0.5">
+                                    {commit.author} &middot; {commit.time_ago}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {trackedChanges.length === 0 &&
+                    untrackedFiles.length === 0 &&
+                    commits.length === 0 && (
+                        <div className="p-3 text-xs text-swarm-text-dim">
+                            No changes or commits
+                        </div>
+                    )}
+            </div>
+        </div>
+    );
+}
+
+function StatusIcon({ status }: { status: string }) {
+    const colors: Record<string, string> = {
+        modified: "text-yellow-400",
+        added: "text-green-400",
+        deleted: "text-red-400",
+        renamed: "text-blue-400",
+        untracked: "text-cyan-400",
+    };
+    const letters: Record<string, string> = {
+        modified: "M",
+        added: "A",
+        deleted: "D",
+        renamed: "R",
+        untracked: "?",
+    };
+    return (
+        <span
+            className={`text-[10px] font-mono font-bold ${colors[status] || "text-gray-400"}`}
+        >
+            {letters[status] || "?"}
+        </span>
+    );
+}
+
+function formatModel(model: string): string {
+    const lower = model.toLowerCase();
+    if (lower.includes("opus")) return "Opus";
+    if (lower.includes("sonnet")) return "Sonnet";
+    if (lower.includes("haiku")) return "Haiku";
+    return model.split("-")[0] ?? model;
+}
+
+function formatTokens(n: number): string {
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+    return String(n);
+}
+
+function formatTimeAgo(epochSec: number): string {
+    if (!epochSec) return "";
+    const now = Date.now() / 1000;
+    const diff = now - epochSec;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function DiffErrorToast({ message }: { message: string }) {
+    return (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-red-500/90 text-white text-xs rounded-lg shadow-lg animate-pulse">
+            {message}
+        </div>
+    );
 }

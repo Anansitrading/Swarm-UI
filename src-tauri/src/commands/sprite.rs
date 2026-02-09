@@ -1,62 +1,176 @@
 use crate::error::AppError;
+use crate::sprites_api;
+use crate::state::{AppState, PtyInfo};
 use serde::Serialize;
-use std::process::Command;
+use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
 pub struct SpriteInfo {
     pub name: String,
     pub status: String,
     pub id: Option<String>,
+    pub region: Option<String>,
 }
 
-/// List all sprites via `sprite list` CLI
+/// List all sprites via REST API
 #[tauri::command]
-pub async fn sprite_list() -> Result<Vec<SpriteInfo>, AppError> {
-    let output = Command::new("sprite")
-        .arg("list")
-        .output()
-        .map_err(|e| AppError::Internal(format!("Failed to run sprite CLI: {e}")))?;
+pub async fn sprite_list(state: State<'_, AppState>) -> Result<Vec<SpriteInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let sprites = client.list_sprites().await?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut sprites = Vec::new();
+    Ok(sprites
+        .into_iter()
+        .map(|s| SpriteInfo {
+            name: s.name,
+            status: s.status,
+            id: s.id,
+            region: s.region,
+        })
+        .collect())
+}
 
-    // Parse sprite list output (tab-separated: name, status, id)
-    for line in stdout.lines().skip(1) {
-        // Skip header
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            sprites.push(SpriteInfo {
-                name: parts[0].to_string(),
-                status: parts[1].to_string(),
-                id: parts.get(2).map(|s| s.to_string()),
-            });
+/// Execute a command on a sprite via REST API (non-interactive)
+#[tauri::command]
+pub async fn sprite_exec(
+    name: String,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client.exec_http(&name, &command).await?;
+
+    let mut output = result.stdout;
+    if !result.stderr.is_empty() {
+        if !output.is_empty() {
+            output.push('\n');
         }
+        output.push_str(&result.stderr);
     }
-
-    Ok(sprites)
+    Ok(output)
 }
 
-/// Execute a command on a sprite via `sprite exec`
-#[tauri::command]
-pub async fn sprite_exec(name: String, command: String) -> Result<String, AppError> {
-    let output = Command::new("sprite")
-        .args(["exec", "-s", &name, &command])
-        .output()
-        .map_err(|e| AppError::Internal(format!("sprite exec failed: {e}")))?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Create a checkpoint for a sprite
+/// Create a checkpoint for a sprite via REST API
 #[tauri::command]
 pub async fn sprite_checkpoint_create(
     name: String,
     description: String,
+    state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let output = Command::new("sprite")
-        .args(["checkpoint", "create", "-s", &name, "-c", &description])
-        .output()
-        .map_err(|e| AppError::Internal(format!("sprite checkpoint failed: {e}")))?;
+    let client = state.get_sprites_client()?;
+    let checkpoint = client.create_checkpoint(&name, &description).await?;
+    Ok(format!("Checkpoint {} created", checkpoint.id))
+}
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+/// List checkpoints for a sprite
+#[tauri::command]
+pub async fn sprite_list_checkpoints(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<sprites_api::Checkpoint>, AppError> {
+    let client = state.get_sprites_client()?;
+    client.list_checkpoints(&name).await
+}
+
+/// Restore a checkpoint
+#[tauri::command]
+pub async fn sprite_restore_checkpoint(
+    name: String,
+    checkpoint_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    client.restore_checkpoint(&name, &checkpoint_id).await
+}
+
+/// Delete a sprite
+#[tauri::command]
+pub async fn sprite_delete(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    client.delete_sprite(&name).await
+}
+
+/// Create a new sprite
+#[tauri::command]
+pub async fn sprite_create(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<SpriteInfo, AppError> {
+    let client = state.get_sprites_client()?;
+    let sprite = client.create_sprite(&name).await?;
+    Ok(SpriteInfo {
+        name: sprite.name,
+        status: sprite.status,
+        id: sprite.id,
+        region: sprite.region,
+    })
+}
+
+/// Spawn an interactive WebSocket terminal to a sprite
+#[tauri::command]
+pub async fn sprite_ws_spawn(
+    sprite_name: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<PtyInfo, AppError> {
+    let client = state.get_sprites_client()?;
+    let c = cols.unwrap_or(80);
+    let r = rows.unwrap_or(24);
+    let ws_url = client.ws_exec_url(&sprite_name, c, r);
+    let token = client.token().to_string();
+
+    crate::sprites_ws::sprite_ws_connect(&sprite_name, &ws_url, &token, c, r, app, &state.ws_state)
+        .await
+}
+
+/// Write to a sprite WebSocket terminal
+#[tauri::command]
+pub async fn sprite_ws_write(
+    id: String,
+    data: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data)
+        .map_err(|e| AppError::Internal(format!("base64 decode failed: {e}")))?;
+
+    crate::sprites_ws::ws_write(&id, &decoded, &state.ws_state).await
+}
+
+/// Resize a sprite WebSocket terminal
+#[tauri::command]
+pub async fn sprite_ws_resize(
+    id: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    crate::sprites_ws::ws_resize(&id, cols, rows, &state.ws_state).await
+}
+
+/// Kill a sprite WebSocket terminal
+#[tauri::command]
+pub async fn sprite_ws_kill(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    crate::sprites_ws::ws_kill(&id, &state.ws_state).await
+}
+
+/// Configure the Sprites API client from settings
+#[tauri::command]
+pub async fn sprite_configure(
+    base_url: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    state.set_sprites_client(base_url.clone(), token.clone());
+
+    // Test connection
+    let client = state.get_sprites_client()?;
+    client.test_connection().await
+}
+
+/// Test connection to Sprites API
+#[tauri::command]
+pub async fn sprite_test_connection(state: State<'_, AppState>) -> Result<String, AppError> {
+    let client = state.get_sprites_client()?;
+    client.test_connection().await
 }

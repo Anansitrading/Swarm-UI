@@ -14,6 +14,8 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
     let mut input_tokens: u64 = 0;
     let mut output_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
+    let mut cache_creation_tokens: u64 = 0;
+    let mut cache_read_tokens: u64 = 0;
     let mut session_id = String::new();
     let mut git_branch = None;
     let mut cwd = None;
@@ -88,6 +90,12 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
                     output_tokens = ot;
                     total_output_tokens += ot;
                 }
+                if let Some(ct) = usage.cache_creation_input_tokens {
+                    cache_creation_tokens = ct; // Use latest
+                }
+                if let Some(cr) = usage.cache_read_input_tokens {
+                    cache_read_tokens = cr; // Use latest
+                }
             }
 
             // Status detection from message role and content
@@ -109,8 +117,7 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
                                                     .unwrap_or("unknown")
                                                     .to_string();
                                                 has_pending_tool_use = true;
-                                                status =
-                                                    SessionStatus::ExecutingTool { name };
+                                                status = SessionStatus::ExecutingTool { name };
                                             }
                                             "thinking" => {
                                                 status = SessionStatus::Thinking;
@@ -175,6 +182,9 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
         project_dir.to_string()
     };
 
+    // Context = input_tokens + cache_creation + cache_read
+    let context_tokens = input_tokens + cache_creation_tokens + cache_read_tokens;
+
     Ok(SessionInfo {
         id: session_id,
         project_path,
@@ -186,6 +196,9 @@ pub fn parse_session_file(path: &str) -> Result<SessionInfo, AppError> {
         input_tokens,
         output_tokens,
         total_output_tokens,
+        context_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
         git_branch,
         cwd,
     })
@@ -219,16 +232,15 @@ fn chrono_parse_unix(ts: &str) -> Result<u64, ()> {
             let sec: i64 = time_parts[2].parse().map_err(|_| ())?;
 
             // Simplified epoch calculation (approximate, good enough for relative timing)
-            let days = (year - 1970) * 365 + (year - 1969) / 4 - (year - 1901) / 100
-                + (year - 1601) / 400;
+            let days =
+                (year - 1970) * 365 + (year - 1969) / 4 - (year - 1901) / 100 + (year - 1601) / 400;
             let month_days: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
             let mday = if month >= 1 && month <= 12 {
                 month_days[(month - 1) as usize]
             } else {
                 0
             };
-            let is_leap =
-                (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
             let leap_add = if is_leap && month > 2 { 1 } else { 0 };
 
             let total_days = days + mday + day - 1 + leap_add;
@@ -249,6 +261,166 @@ fn chrono_parse_unix(ts: &str) -> Result<u64, ()> {
         return Ok(num);
     }
     Err(())
+}
+
+/// Extract conversation messages from a JSONL file for display
+pub fn extract_conversation(path: &str) -> Result<Vec<ConversationMessage>, AppError> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut messages = Vec::new();
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let entry: JsonlEntry = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let entry_type = entry.entry_type.as_deref().unwrap_or("");
+        if entry_type != "user" && entry_type != "assistant" {
+            continue;
+        }
+
+        let timestamp = entry
+            .timestamp
+            .as_deref()
+            .and_then(|ts| chrono_parse_unix(ts).ok());
+
+        if let Some(msg) = &entry.message {
+            let role = msg.role.as_deref().unwrap_or("unknown").to_string();
+
+            if let Some(content) = &msg.content {
+                if let Some(arr) = content.as_array() {
+                    for block in arr {
+                        let block_type = block
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("unknown");
+
+                        match block_type {
+                            "text" => {
+                                let text = block
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !text.is_empty() {
+                                    messages.push(ConversationMessage {
+                                        role: role.clone(),
+                                        content_type: "text".to_string(),
+                                        text,
+                                        tool_name: None,
+                                        timestamp,
+                                    });
+                                }
+                            }
+                            "tool_use" => {
+                                let name = block
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let input = block
+                                    .get("input")
+                                    .map(|i| serde_json::to_string_pretty(i).unwrap_or_default())
+                                    .unwrap_or_default();
+                                // Truncate long tool inputs
+                                let display = if input.len() > 200 {
+                                    format!("{}...", &input[..200])
+                                } else {
+                                    input
+                                };
+                                messages.push(ConversationMessage {
+                                    role: role.clone(),
+                                    content_type: "tool_use".to_string(),
+                                    text: display,
+                                    tool_name: Some(name),
+                                    timestamp,
+                                });
+                            }
+                            "tool_result" => {
+                                let tool_id = block
+                                    .get("tool_use_id")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let content_val = block.get("content");
+                                let text =
+                                    if let Some(arr2) = content_val.and_then(|c| c.as_array()) {
+                                        arr2.iter()
+                                            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    } else if let Some(s) = content_val.and_then(|c| c.as_str()) {
+                                        s.to_string()
+                                    } else {
+                                        String::new()
+                                    };
+                                // Truncate long results
+                                let display = if text.len() > 500 {
+                                    format!("{}...", &text[..500])
+                                } else {
+                                    text
+                                };
+                                if !display.is_empty() {
+                                    messages.push(ConversationMessage {
+                                        role: "tool".to_string(),
+                                        content_type: "tool_result".to_string(),
+                                        text: display,
+                                        tool_name: Some(tool_id),
+                                        timestamp,
+                                    });
+                                }
+                            }
+                            "thinking" => {
+                                let text = block
+                                    .get("thinking")
+                                    .or_else(|| block.get("text"))
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !text.is_empty() {
+                                    let display = if text.len() > 300 {
+                                        format!("{}...", &text[..300])
+                                    } else {
+                                        text
+                                    };
+                                    messages.push(ConversationMessage {
+                                        role: role.clone(),
+                                        content_type: "thinking".to_string(),
+                                        text: display,
+                                        tool_name: None,
+                                        timestamp,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else if let Some(text) = content.as_str() {
+                    // Simple string content (older format)
+                    if !text.is_empty() {
+                        messages.push(ConversationMessage {
+                            role: role.clone(),
+                            content_type: "text".to_string(),
+                            text: text.to_string(),
+                            tool_name: None,
+                            timestamp,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(messages)
 }
 
 /// Incremental reader that tracks file offset for live watching

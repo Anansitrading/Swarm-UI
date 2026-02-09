@@ -29,3 +29,9 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 libc = "0.2"
 thiserror = "2"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tauri-plugin-store = "2"
+url = "2"
+base64 = "0.22"
+futures-util = "0.3"

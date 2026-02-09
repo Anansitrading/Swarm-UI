@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Session status derived from JSONL entries
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionStatus {
     Thinking,
     ExecutingTool { name: String },
@@ -52,6 +52,9 @@ pub struct SessionInfo {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_output_tokens: u64,
+    pub context_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
 }
@@ -72,6 +75,16 @@ pub enum ActivityType {
     UserMessage,
     AssistantMessage,
     Thinking,
+}
+
+/// A conversation message extracted from JSONL for display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationMessage {
+    pub role: String,         // "user", "assistant", "tool"
+    pub content_type: String, // "text", "tool_use", "tool_result", "thinking"
+    pub text: String,         // The actual text content
+    pub tool_name: Option<String>,
+    pub timestamp: Option<u64>,
 }
 
 /// Raw JSONL entry as it appears in Claude Code session files

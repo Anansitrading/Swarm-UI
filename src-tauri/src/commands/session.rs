@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::parsers::session_types::{SessionInfo, SessionStatus};
+use crate::parsers::session_types::{ConversationMessage, SessionInfo, SessionStatus};
 use std::fs;
 
 /// List all discovered Claude Code sessions from ~/.claude/projects/
@@ -70,6 +70,9 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
                         input_tokens: 0,
                         output_tokens: 0,
                         total_output_tokens: 0,
+                        context_tokens: 0,
+                        cache_creation_tokens: 0,
+                        cache_read_tokens: 0,
                         git_branch: None,
                         cwd: None,
                     });
@@ -88,6 +91,12 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
 #[tauri::command]
 pub async fn get_session_detail(jsonl_path: String) -> Result<SessionInfo, AppError> {
     crate::parsers::jsonl_parser::parse_session_file(&jsonl_path)
+}
+
+/// Get conversation messages for display in the UI
+#[tauri::command]
+pub async fn get_conversation(jsonl_path: String) -> Result<Vec<ConversationMessage>, AppError> {
+    crate::parsers::jsonl_parser::extract_conversation(&jsonl_path)
 }
 
 /// Decode Claude's path encoding: dashes become path separators

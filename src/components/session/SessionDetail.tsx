@@ -1,172 +1,315 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { SessionInfo } from "../../types/session";
-import { StatusBadge } from "./StatusBadge";
 import { ContextBar } from "./ContextBar";
 
 interface SessionDetailProps {
-  session: SessionInfo;
-  onOpenTerminal: (cwd: string) => void;
-  onKillProcess: (pid: number) => void;
+    session: SessionInfo;
+    onOpenTerminal: (cwd: string) => void;
+    onKillProcess?: (pid: number) => void;
+    onShowDiff?: (repoPath: string) => void;
+    onBack?: () => void;
 }
 
-interface ProcessInfo {
-  pid: number;
-  cmdline: string;
-  cwd: string;
+interface ConversationMessage {
+    role: string;
+    content_type: string;
+    text: string;
+    tool_name: string | null;
+    timestamp: number | null;
 }
 
-export function SessionDetail({ session, onOpenTerminal, onKillProcess }: SessionDetailProps) {
-  const [detail, setDetail] = useState<SessionInfo>(session);
-  const [processes, setProcesses] = useState<ProcessInfo[]>([]);
+export function SessionDetail({
+    session,
+    onOpenTerminal,
+    onShowDiff,
+    onBack,
+}: SessionDetailProps) {
+    const [detail, setDetail] = useState<SessionInfo>(session);
+    const [messages, setMessages] = useState<ConversationMessage[]>([]);
+    const [showTools, setShowTools] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const info = await invoke<SessionInfo>("get_session_detail", {
-        jsonlPath: session.jsonl_path,
-      });
-      setDetail(info);
-    } catch {
-      // Keep current data on error
-    }
-  }, [session.jsonl_path]);
+    const refresh = useCallback(async () => {
+        try {
+            const info = await invoke<SessionInfo>("get_session_detail", {
+                jsonlPath: session.jsonl_path,
+            });
+            setDetail(info);
+        } catch {
+            // Keep current data on error
+        }
+    }, [session.jsonl_path]);
 
-  const fetchProcesses = useCallback(async () => {
-    try {
-      const procs = await invoke<ProcessInfo[]>("find_claude_processes");
-      // Filter to processes matching this session's CWD
-      const cwd = session.cwd || session.project_path;
-      const matched = procs.filter((p) => p.cwd.includes(cwd) || cwd.includes(p.cwd));
-      setProcesses(matched);
-    } catch {
-      setProcesses([]);
-    }
-  }, [session.cwd, session.project_path]);
+    const fetchConversation = useCallback(async () => {
+        try {
+            const msgs = await invoke<ConversationMessage[]>(
+                "get_conversation",
+                {
+                    jsonlPath: session.jsonl_path,
+                },
+            );
+            setMessages(msgs);
+        } catch {
+            setMessages([]);
+        }
+    }, [session.jsonl_path]);
 
-  useEffect(() => {
-    refresh();
-    fetchProcesses();
-    const interval = setInterval(() => {
-      refresh();
-      fetchProcesses();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [refresh, fetchProcesses]);
+    useEffect(() => {
+        refresh();
+        fetchConversation();
+        const interval = setInterval(() => {
+            refresh();
+            fetchConversation();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [refresh, fetchConversation]);
 
-  // Update detail when session prop changes
-  useEffect(() => {
-    setDetail(session);
-  }, [session]);
+    useEffect(() => {
+        setDetail(session);
+    }, [session]);
 
-  const projectName = detail.project_path.split("/").pop() || detail.project_path;
-  const cwd = detail.cwd || detail.project_path;
+    // Auto-scroll to bottom when new messages arrive
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [messages]);
 
-  return (
-    <div className="flex flex-col h-full bg-swarm-surface overflow-y-auto">
-      {/* Header */}
-      <div className="p-4 border-b border-swarm-border">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold text-swarm-text">{projectName}</h2>
-          <StatusBadge status={detail.status} />
-        </div>
-        <div className="text-xs text-swarm-text-dim font-mono">{cwd}</div>
-        {detail.git_branch && (
-          <div className="text-xs text-swarm-text-dim mt-1 flex items-center gap-1">
-            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.5 2.5 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z" />
-            </svg>
-            {detail.git_branch}
-          </div>
-        )}
-      </div>
+    const cwd = detail.cwd || detail.project_path;
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 p-4 border-b border-swarm-border">
-        <div>
-          <div className="text-xs text-swarm-text-dim">Model</div>
-          <div className="text-sm text-swarm-text font-medium">
-            {detail.model ? formatModel(detail.model) : "-"}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-swarm-text-dim">Input</div>
-          <div className="text-sm text-swarm-text font-mono">
-            {formatTokens(detail.input_tokens)}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-swarm-text-dim">Total Output</div>
-          <div className="text-sm text-swarm-text font-mono">
-            {formatTokens(detail.total_output_tokens)}
-          </div>
-        </div>
-      </div>
+    // Filter messages based on showTools toggle
+    const displayMessages = showTools
+        ? messages
+        : messages.filter(
+              (m) => m.content_type === "text" || m.content_type === "thinking",
+          );
 
-      {/* Context Usage */}
-      {detail.input_tokens > 0 && (
-        <div className="p-4 border-b border-swarm-border">
-          <div className="text-xs text-swarm-text-dim mb-2">Context Window</div>
-          <ContextBar inputTokens={detail.input_tokens} model={detail.model} />
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="p-4 border-b border-swarm-border space-y-2">
-        <button
-          onClick={() => onOpenTerminal(cwd)}
-          className="w-full px-3 py-2 text-sm bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
-        >
-          Open Terminal in {projectName}
-        </button>
-      </div>
-
-      {/* Processes */}
-      {processes.length > 0 && (
-        <div className="p-4">
-          <div className="text-xs text-swarm-text-dim mb-2">Processes ({processes.length})</div>
-          <div className="space-y-2">
-            {processes.map((proc) => (
-              <div
-                key={proc.pid}
-                className="flex items-center justify-between p-2 rounded bg-swarm-bg border border-swarm-border text-xs"
-              >
-                <div className="min-w-0">
-                  <div className="text-swarm-text font-mono">PID {proc.pid}</div>
-                  <div className="text-swarm-text-dim truncate">{proc.cmdline}</div>
+    return (
+        <div className="flex flex-col h-full bg-swarm-surface overflow-hidden">
+            {/* Header bar - compact like AgentHub */}
+            <div className="shrink-0 border-b border-swarm-border">
+                {/* Session ID + actions row */}
+                <div className="flex items-center justify-between px-3 py-1.5 bg-swarm-bg">
+                    <div className="flex items-center gap-2">
+                        {onBack && (
+                            <button
+                                onClick={onBack}
+                                className="px-1.5 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors mr-1"
+                                title="Back to overview"
+                            >
+                                &larr;
+                            </button>
+                        )}
+                        <StatusDot status={detail.status} />
+                        <span className="text-xs font-mono text-swarm-text-dim">
+                            Session:{" "}
+                            <span className="text-swarm-text">
+                                {detail.id.slice(0, 8)}
+                            </span>
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                        {onShowDiff && (
+                            <button
+                                onClick={() => onShowDiff(cwd)}
+                                className="px-2 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors"
+                            >
+                                Diff
+                            </button>
+                        )}
+                        <button
+                            onClick={() => refresh()}
+                            className="px-2 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors"
+                        >
+                            Refresh
+                        </button>
+                    </div>
                 </div>
-                <button
-                  onClick={() => onKillProcess(proc.pid)}
-                  className="ml-2 px-2 py-1 text-red-400 border border-red-400/30 rounded hover:bg-red-400/10 transition-colors shrink-0"
-                >
-                  Kill
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Session ID */}
-      <div className="p-4 mt-auto">
-        <div className="text-xs text-swarm-text-dim">
-          Session: <span className="font-mono">{detail.id.slice(0, 8)}</span>
+                {/* Path + branch row */}
+                <div className="flex items-center gap-2 px-3 py-1 text-xs">
+                    <span className="text-swarm-text-dim font-mono truncate">
+                        {cwd}
+                    </span>
+                    {detail.git_branch && (
+                        <span className="text-swarm-accent shrink-0">
+                            {detail.git_branch}
+                        </span>
+                    )}
+                </div>
+
+                {/* Context bar */}
+                {(detail.context_tokens > 0 || detail.input_tokens > 0) && (
+                    <div className="px-3 pb-1.5">
+                        <ContextBar
+                            contextTokens={detail.context_tokens}
+                            inputTokens={detail.input_tokens}
+                            cacheCreationTokens={detail.cache_creation_tokens}
+                            cacheReadTokens={detail.cache_read_tokens}
+                            model={detail.model}
+                        />
+                    </div>
+                )}
+            </div>
+
+            {/* Conversation area - scrollable */}
+            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+                {/* Toggle for tool calls */}
+                <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1 bg-swarm-surface/95 backdrop-blur border-b border-swarm-border/50">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-swarm-text-dim">
+                        <input
+                            type="checkbox"
+                            checked={showTools}
+                            onChange={(e) => setShowTools(e.target.checked)}
+                            className="w-3 h-3 accent-swarm-accent"
+                        />
+                        Show tool calls (
+                        {
+                            messages.filter(
+                                (m) =>
+                                    m.content_type !== "text" &&
+                                    m.content_type !== "thinking",
+                            ).length
+                        }
+                        )
+                    </label>
+                </div>
+
+                {displayMessages.length === 0 ? (
+                    <div className="flex items-center justify-center p-8 text-swarm-text-dim text-sm">
+                        No conversation yet.
+                    </div>
+                ) : (
+                    <div className="space-y-0">
+                        {displayMessages.map((msg, i) => (
+                            <MessageBubble key={i} message={msg} />
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Bottom action bar */}
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-swarm-border bg-swarm-bg">
+                <button
+                    onClick={() => onOpenTerminal(cwd)}
+                    className="flex-1 px-3 py-1.5 text-xs bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
+                >
+                    Open Terminal
+                </button>
+                <div className="text-[10px] text-swarm-text-dim font-mono">
+                    {detail.model ? formatModel(detail.model) : ""}
+                    {detail.total_output_tokens > 0 &&
+                        ` | ${formatTokens(detail.total_output_tokens)} out`}
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
+}
+
+function MessageBubble({ message }: { message: ConversationMessage }) {
+    const isUser = message.role === "user";
+    const isThinking = message.content_type === "thinking";
+    const isTool =
+        message.content_type === "tool_use" ||
+        message.content_type === "tool_result";
+
+    if (isTool) {
+        return (
+            <div className="px-3 py-1">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                    {message.content_type === "tool_use" ? (
+                        <>
+                            <span className="text-orange-400 font-medium">
+                                {message.tool_name}
+                            </span>
+                            <span className="text-swarm-text-dim">
+                                {message.text.slice(0, 80)}
+                                {message.text.length > 80 ? "..." : ""}
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <span className="text-green-400/70">result</span>
+                            <span className="text-swarm-text-dim font-mono truncate">
+                                {message.text.slice(0, 100)}
+                            </span>
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    if (isThinking) {
+        return (
+            <div className="px-3 py-1.5 border-l-2 border-blue-500/30 ml-3 my-1">
+                <div className="text-[10px] text-blue-400/60 mb-0.5 italic">
+                    thinking
+                </div>
+                <div className="text-xs text-swarm-text-dim/70 italic whitespace-pre-wrap">
+                    {message.text}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className={`px-3 py-2 ${isUser ? "bg-swarm-bg/50" : ""}`}>
+            <div className="flex items-center gap-1.5 mb-1">
+                <span
+                    className={`w-1.5 h-1.5 rounded-full ${isUser ? "bg-blue-400" : "bg-swarm-accent"}`}
+                />
+                <span className="text-[10px] font-medium text-swarm-text-dim">
+                    {isUser ? "You" : "Claude"}
+                </span>
+            </div>
+            <div className="text-xs text-swarm-text whitespace-pre-wrap pl-3 leading-relaxed">
+                {message.text}
+            </div>
+        </div>
+    );
+}
+
+function StatusDot({ status }: { status: SessionInfo["status"] }) {
+    const colors: Record<string, string> = {
+        thinking: "bg-blue-400",
+        executing_tool: "bg-orange-400",
+        awaiting_approval: "bg-yellow-400",
+        waiting: "bg-blue-300",
+        idle: "bg-gray-400",
+        stopped: "bg-red-400",
+        unknown: "bg-gray-500",
+    };
+    const color = colors[status.type] || "bg-gray-500";
+    const isActive =
+        status.type === "thinking" || status.type === "executing_tool";
+
+    return (
+        <span className="relative flex h-2 w-2">
+            {isActive && (
+                <span
+                    className={`animate-ping absolute inline-flex h-full w-full rounded-full ${color} opacity-75`}
+                />
+            )}
+            <span
+                className={`relative inline-flex rounded-full h-2 w-2 ${color}`}
+            />
+        </span>
+    );
 }
 
 function formatModel(model: string): string {
-  const lower = model.toLowerCase();
-  if (lower.includes("opus")) return "Opus 4.6";
-  if (lower.includes("sonnet")) return "Sonnet 4.5";
-  if (lower.includes("haiku")) return "Haiku 4.5";
-  return model.split("-").slice(0, 2).join(" ");
+    const lower = model.toLowerCase();
+    if (lower.includes("opus")) return "Opus 4.6";
+    if (lower.includes("sonnet")) return "Sonnet 4.5";
+    if (lower.includes("haiku")) return "Haiku 4.5";
+    return model.split("-").slice(0, 2).join(" ");
 }
 
 function formatTokens(n: number): string {
-  if (n === 0) return "-";
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n === 0) return "-";
+    if (n < 1000) return String(n);
+    if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
+    return `${(n / 1_000_000).toFixed(2)}M`;
 }
