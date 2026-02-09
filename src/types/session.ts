@@ -19,6 +19,7 @@ export interface SessionInfo {
   output_tokens: number;
   total_output_tokens: number;
   git_branch: string | null;
+  cwd: string | null;
 }
 
 export interface ActivityEntry {

@@ -1,9 +1,8 @@
-use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
+use portable_pty::MasterPty;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use uuid::Uuid;
+use std::io::Write;
+use std::sync::Mutex;
 
 /// Represents a single PTY instance
 pub struct PtyInstance {
