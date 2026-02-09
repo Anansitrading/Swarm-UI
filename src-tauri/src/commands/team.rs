@@ -81,6 +81,101 @@ pub struct TaskSummary {
     pub completed: usize,
 }
 
+/// Check if agent teams are enabled (directory exists and settings flag is set)
+#[tauri::command]
+pub async fn check_teams_enabled() -> Result<bool, AppError> {
+    let home = dirs::home_dir().ok_or_else(|| AppError::Internal("No home dir".into()))?;
+    let teams_dir = home.join(".claude").join("teams");
+    Ok(teams_dir.exists())
+}
+
+/// Enable agent teams: create ~/.claude/teams/ and set the experimental flag in settings.json
+#[tauri::command]
+pub async fn init_teams() -> Result<(), AppError> {
+    let claude_dir = dirs::home_dir()
+        .ok_or_else(|| AppError::Internal("No home dir".into()))?
+        .join(".claude");
+
+    // Create the teams directory
+    fs::create_dir_all(claude_dir.join("teams"))?;
+
+    // Read or create ~/.claude/settings.json and add the experimental flag
+    let settings_path = claude_dir.join("settings.json");
+    let mut settings: serde_json::Value = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let obj = settings.as_object_mut()
+        .ok_or_else(|| AppError::Internal("settings.json is not an object".into()))?;
+
+    // Set env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
+    let env = obj.entry("env")
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(env_obj) = env.as_object_mut() {
+        env_obj.insert(
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+            serde_json::json!("1"),
+        );
+    }
+
+    // Set teammateMode = "in-process"
+    obj.insert("teammateMode".to_string(), serde_json::json!("in-process"));
+
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+
+    Ok(())
+}
+
+/// Create a new agent team in ~/.claude/teams/{name}/config.json
+#[tauri::command]
+pub async fn create_team(name: String, description: Option<String>) -> Result<TeamInfo, AppError> {
+    let home = dirs::home_dir().ok_or_else(|| AppError::Internal("No home dir".into()))?;
+    let team_dir = home.join(".claude").join("teams").join(&name);
+
+    if team_dir.join("config.json").exists() {
+        return Err(AppError::Internal(format!("Team '{}' already exists", name)));
+    }
+
+    fs::create_dir_all(&team_dir)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let config = TeamConfig {
+        name: name.clone(),
+        description: description.clone(),
+        created_at: Some(now),
+        lead_agent_id: None,
+        lead_session_id: None,
+        members: vec![],
+    };
+
+    let content = serde_json::to_string_pretty(&config)?;
+    fs::write(team_dir.join("config.json"), content)?;
+
+    Ok(TeamInfo {
+        name,
+        description,
+        created_at: Some(now),
+        lead_agent_id: None,
+        lead_session_id: None,
+        members: vec![],
+        tasks: vec![],
+        task_summary: TaskSummary {
+            total: 0,
+            pending: 0,
+            in_progress: 0,
+            completed: 0,
+        },
+        has_inboxes: false,
+    })
+}
+
 /// List all agent teams from ~/.claude/teams/
 #[tauri::command]
 pub async fn list_teams() -> Result<Vec<TeamInfo>, AppError> {

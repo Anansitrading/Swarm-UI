@@ -70,6 +70,9 @@ pub fn run() {
             commands::agent::save_smith_override,
             commands::agent::load_smith_override,
             // Team commands
+            commands::team::check_teams_enabled,
+            commands::team::init_teams,
+            commands::team::create_team,
             commands::team::list_teams,
             commands::team::get_team,
             // Watcher commands

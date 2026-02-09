@@ -10,17 +10,24 @@ export function TeamList() {
         teams,
         selectedTeamName,
         loading,
+        enabled,
         fetchTeams,
+        checkEnabled,
+        initTeams,
         selectTeam,
         startWatcher,
     } = useTeamStore();
+    const [initializing, setInitializing] = useState(false);
+    const [showCreateForm, setShowCreateForm] = useState(false);
 
     useEffect(() => {
+        checkEnabled();
         fetchTeams();
         startWatcher();
-    }, [fetchTeams, startWatcher]);
+    }, [checkEnabled, fetchTeams, startWatcher]);
 
-    if (loading && teams.length === 0) {
+    // Loading state
+    if (enabled === null || (loading && teams.length === 0 && !initializing)) {
         return (
             <div className="flex items-center justify-center p-8 text-swarm-text-dim text-sm">
                 Loading teams...
@@ -28,17 +35,48 @@ export function TeamList() {
         );
     }
 
-    if (teams.length === 0) {
+    // Not enabled — show Enable button
+    if (!enabled) {
         return (
-            <div className="p-4 text-center text-swarm-text-dim text-sm">
-                <p>No agent teams found.</p>
-                <p className="text-[10px] mt-2 opacity-60">
-                    Teams appear in ~/.claude/teams/
+            <div className="flex flex-col items-center justify-center p-6 text-center gap-3">
+                <svg
+                    className="w-10 h-10 text-purple-400/60"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1}
+                >
+                    <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"
+                    />
+                </svg>
+                <div>
+                    <p className="text-sm text-swarm-text-dim">Agent teams not enabled.</p>
+                    <p className="text-[10px] mt-1 text-swarm-text-dim/50 leading-relaxed max-w-[220px]">
+                        Coordinate multiple Claude Code sessions with shared tasks and inter-agent messaging.
+                    </p>
+                </div>
+                <button
+                    onClick={async () => {
+                        setInitializing(true);
+                        await initTeams();
+                        setInitializing(false);
+                    }}
+                    disabled={initializing}
+                    className="mt-1 px-4 py-1.5 text-xs font-medium rounded bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 hover:bg-swarm-accent/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {initializing ? "Enabling..." : "Enable Agent Teams"}
+                </button>
+                <p className="text-[10px] text-swarm-text-dim/40 leading-relaxed max-w-[220px] mt-1">
+                    Sets <span className="font-mono">CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS</span> in settings.json and creates ~/.claude/teams/
                 </p>
             </div>
         );
     }
 
+    // Enabled — show team list (with + Add header and create form)
     return (
         <div className="flex flex-col h-full">
             <div className="p-2 border-b border-swarm-border">
@@ -46,29 +84,52 @@ export function TeamList() {
                     <span>
                         {teams.length} team{teams.length !== 1 ? "s" : ""}
                     </span>
-                    <button
-                        onClick={() => fetchTeams()}
-                        className="hover:text-swarm-text transition-colors"
-                    >
-                        Refresh
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowCreateForm(!showCreateForm)}
+                            className="hover:text-swarm-text transition-colors text-swarm-accent"
+                        >
+                            + Add
+                        </button>
+                        <button
+                            onClick={() => fetchTeams()}
+                            className="hover:text-swarm-text transition-colors"
+                        >
+                            Refresh
+                        </button>
+                    </div>
                 </div>
             </div>
+            {showCreateForm && (
+                <CreateTeamForm
+                    onCreated={() => setShowCreateForm(false)}
+                    onCancel={() => setShowCreateForm(false)}
+                />
+            )}
             <div className="flex-1 overflow-y-auto">
-                {teams.map((team) => (
-                    <TeamCard
-                        key={team.name}
-                        team={team}
-                        selected={selectedTeamName === team.name}
-                        onSelect={() =>
-                            selectTeam(
-                                selectedTeamName === team.name
-                                    ? null
-                                    : team.name,
-                            )
-                        }
-                    />
-                ))}
+                {teams.length === 0 && !showCreateForm ? (
+                    <div className="p-4 text-center text-swarm-text-dim text-sm">
+                        <p>No teams yet.</p>
+                        <p className="text-[10px] mt-1 opacity-60">
+                            Click "+ Add" to create your first team.
+                        </p>
+                    </div>
+                ) : (
+                    teams.map((team) => (
+                        <TeamCard
+                            key={team.name}
+                            team={team}
+                            selected={selectedTeamName === team.name}
+                            onSelect={() =>
+                                selectTeam(
+                                    selectedTeamName === team.name
+                                        ? null
+                                        : team.name,
+                                )
+                            }
+                        />
+                    ))
+                )}
             </div>
         </div>
     );
@@ -335,6 +396,78 @@ function TasksList({ tasks }: { tasks: TeamTask[] }) {
                 </button>
             )}
         </div>
+    );
+}
+
+function CreateTeamForm({
+    onCreated,
+    onCancel,
+}: {
+    onCreated: () => void;
+    onCancel: () => void;
+}) {
+    const createTeam = useTeamStore((s) => s.createTeam);
+    const [name, setName] = useState("");
+    const [description, setDescription] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        setSubmitting(true);
+        setError(null);
+        try {
+            await createTeam(trimmed, description.trim() || undefined);
+            onCreated();
+        } catch (err) {
+            setError(String(err));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <form
+            onSubmit={handleSubmit}
+            className="p-2 border-b border-swarm-border/50 space-y-1.5 bg-swarm-accent/5"
+        >
+            <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Team name"
+                autoFocus
+                className="w-full px-2 py-1 text-xs bg-swarm-bg border border-swarm-border rounded text-swarm-text placeholder:text-swarm-text-dim/40 focus:outline-none focus:border-swarm-accent/50"
+            />
+            <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optional)"
+                className="w-full px-2 py-1 text-xs bg-swarm-bg border border-swarm-border rounded text-swarm-text placeholder:text-swarm-text-dim/40 focus:outline-none focus:border-swarm-accent/50"
+            />
+            {error && (
+                <p className="text-[10px] text-red-400">{error}</p>
+            )}
+            <div className="flex items-center gap-1.5">
+                <button
+                    type="submit"
+                    disabled={!name.trim() || submitting}
+                    className="px-3 py-1 text-[10px] font-medium rounded bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 hover:bg-swarm-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    {submitting ? "Creating..." : "Create"}
+                </button>
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    className="px-3 py-1 text-[10px] text-swarm-text-dim hover:text-swarm-text transition-colors"
+                >
+                    Cancel
+                </button>
+            </div>
+        </form>
     );
 }
 

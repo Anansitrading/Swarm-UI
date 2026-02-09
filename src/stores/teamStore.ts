@@ -7,9 +7,13 @@ interface TeamState {
     teams: TeamInfo[];
     selectedTeamName: string | null;
     loading: boolean;
+    enabled: boolean | null; // null = not checked yet
     error: string | null;
 
+    checkEnabled: () => Promise<void>;
     fetchTeams: () => Promise<void>;
+    initTeams: () => Promise<void>;
+    createTeam: (name: string, description?: string) => Promise<void>;
     selectTeam: (name: string | null) => void;
     startWatcher: () => Promise<void>;
 }
@@ -18,7 +22,17 @@ export const useTeamStore = create<TeamState>((set) => ({
     teams: [],
     selectedTeamName: null,
     loading: false,
+    enabled: null,
     error: null,
+
+    checkEnabled: async () => {
+        try {
+            const enabled = await invoke<boolean>("check_teams_enabled");
+            set({ enabled });
+        } catch {
+            set({ enabled: false });
+        }
+    },
 
     fetchTeams: async () => {
         set({ loading: true, error: null });
@@ -27,6 +41,28 @@ export const useTeamStore = create<TeamState>((set) => ({
             set({ teams, loading: false });
         } catch (e) {
             set({ error: String(e), loading: false });
+        }
+    },
+
+    initTeams: async () => {
+        set({ loading: true, error: null });
+        try {
+            await invoke("init_teams");
+            const teams = await invoke<TeamInfo[]>("list_teams");
+            set({ teams, loading: false, enabled: true });
+        } catch (e) {
+            set({ error: String(e), loading: false });
+        }
+    },
+
+    createTeam: async (name: string, description?: string) => {
+        set({ error: null });
+        try {
+            const team = await invoke<TeamInfo>("create_team", { name, description });
+            set((state) => ({ teams: [team, ...state.teams] }));
+        } catch (e) {
+            set({ error: String(e) });
+            throw e;
         }
     },
 
