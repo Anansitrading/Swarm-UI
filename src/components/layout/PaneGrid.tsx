@@ -5,6 +5,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { SessionDetail } from "../session/SessionDetail";
 import { SpriteGrid } from "../sprite/SpriteGrid";
+import { FileChangeList } from "../diff/FileChangeList";
 import type { LayoutMode } from "../../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -98,6 +99,9 @@ export function PaneGrid() {
                 args: ["console", "-s", pane.spriteName || ""],
               }}
             />
+          )}
+          {pane.type === "diff" && (
+            <FileChangeList changes={[]} />
           )}
           {pane.type === "empty" && (
             <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
