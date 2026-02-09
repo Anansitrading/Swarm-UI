@@ -2,13 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Base body styles */
+body {
+  margin: 0;
+  padding: 0;
+  background: #0a0a0f;
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
 /* xterm.js terminal styling */
 .xterm {
   height: 100%;
+  padding: 4px;
 }
 
 .xterm-viewport {
   overflow-y: auto !important;
+}
+
+.xterm-screen {
+  width: 100% !important;
 }
 
 /* Custom scrollbar for dark theme */
@@ -18,7 +34,7 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #12121a;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -44,4 +60,25 @@
 
 .animate-pulse-ring {
   animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Smooth transitions for layout changes */
+.transition-grid {
+  transition: grid-template-columns 200ms ease-in-out;
+}
+
+/* Focus ring for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid #7c3aed;
+  outline-offset: -2px;
+}
+
+/* Prevent text selection in non-terminal areas */
+.no-select {
+  user-select: none;
+}
+
+/* Allow text selection in terminal */
+.xterm-screen * {
+  user-select: text;
 }
