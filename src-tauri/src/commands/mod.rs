@@ -1,6 +1,8 @@
+pub mod agent;
+pub mod filesystem;
+pub mod git;
+pub mod process;
 pub mod pty;
 pub mod session;
-pub mod process;
 pub mod sprite;
-pub mod git;
-pub mod filesystem;
+pub mod team;

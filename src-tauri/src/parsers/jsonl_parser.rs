@@ -363,9 +363,15 @@ pub fn extract_conversation(path: &str) -> Result<Vec<ConversationMessage>, AppE
                                     } else {
                                         String::new()
                                     };
-                                // Truncate long results
+                                // Truncate long results (char-safe boundary)
                                 let display = if text.len() > 500 {
-                                    format!("{}...", &text[..500])
+                                    let end = text
+                                        .char_indices()
+                                        .take_while(|(i, _)| *i <= 500)
+                                        .last()
+                                        .map(|(i, c)| i + c.len_utf8())
+                                        .unwrap_or(0);
+                                    format!("{}...", &text[..end])
                                 } else {
                                     text
                                 };
@@ -388,7 +394,13 @@ pub fn extract_conversation(path: &str) -> Result<Vec<ConversationMessage>, AppE
                                     .to_string();
                                 if !text.is_empty() {
                                     let display = if text.len() > 300 {
-                                        format!("{}...", &text[..300])
+                                        let end = text
+                                            .char_indices()
+                                            .take_while(|(i, _)| *i <= 300)
+                                            .last()
+                                            .map(|(i, c)| i + c.len_utf8())
+                                            .unwrap_or(0);
+                                        format!("{}...", &text[..end])
                                     } else {
                                         text
                                     };

@@ -6,8 +6,28 @@ import { TerminalPane } from "../terminal/TerminalPane";
 import { SessionDetail } from "../session/SessionDetail";
 import { SpriteGrid } from "../sprite/SpriteGrid";
 import { DiffViewer } from "../diff/DiffViewer";
+import { AgentPicker } from "../terminal/AgentPicker";
 import type { LayoutMode } from "../../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
+
+/** Build the shell command to launch an agent session */
+function agentCommand(agentName: string): { shell: string; args: string[] } {
+    if (agentName === "claude") {
+        return {
+            shell: "claude",
+            args: ["--dangerously-skip-permissions", "--chrome"],
+        };
+    }
+    return {
+        shell: "claude",
+        args: [
+            "--dangerously-skip-permissions",
+            "--chrome",
+            "--agent-file",
+            agentName,
+        ],
+    };
+}
 
 interface GitFileChange {
     path: string;
@@ -60,9 +80,14 @@ export function PaneGrid() {
     const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
     const handleOpenTerminal = useCallback(
-        async (cwd: string) => {
+        async (cwd: string, agentName?: string) => {
             try {
-                const info = await spawnTerminal({ cwd });
+                let config: Record<string, unknown> = { cwd };
+                if (agentName) {
+                    const cmd = agentCommand(agentName);
+                    config = { ...config, shell: cmd.shell, args: cmd.args };
+                }
+                const info = await spawnTerminal(config);
                 // Switch to list mode (keeps panes intact) so session + terminal
                 // show side by side
                 if (mode === "single") {
@@ -278,22 +303,13 @@ export function PaneGrid() {
                         {panes.length > 0 && panes[0].terminalId ? (
                             <TerminalPane ptyId={panes[0].terminalId} />
                         ) : (
-                            <div className="flex flex-col items-center justify-center h-full bg-swarm-bg gap-3">
-                                <span className="text-swarm-text-dim text-sm">
-                                    No terminal open
-                                </span>
-                                <button
-                                    onClick={() =>
-                                        handleOpenTerminal(
-                                            selectedSession.cwd ||
-                                                selectedSession.project_path,
-                                        )
-                                    }
-                                    className="px-4 py-2 text-xs bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
-                                >
-                                    Open Terminal
-                                </button>
-                            </div>
+                            <AgentLauncher
+                                cwd={
+                                    selectedSession.cwd ||
+                                    selectedSession.project_path
+                                }
+                                onLaunch={handleOpenTerminal}
+                            />
                         )}
                     </div>
                 </div>
@@ -344,6 +360,41 @@ export function PaneGrid() {
                         )}
                     </div>
                 ))
+            )}
+        </div>
+    );
+}
+
+/** Inline agent launcher with agent picker for the "No terminal open" state */
+function AgentLauncher({
+    cwd,
+    onLaunch,
+}: {
+    cwd: string;
+    onLaunch: (cwd: string, agent?: string) => void;
+}) {
+    const [showPicker, setShowPicker] = useState(false);
+
+    return (
+        <div className="relative flex flex-col items-center justify-center h-full bg-swarm-bg gap-3">
+            <span className="text-swarm-text-dim text-sm">
+                No terminal open
+            </span>
+            <button
+                onClick={() => setShowPicker((v) => !v)}
+                className="px-4 py-2 text-xs bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
+            >
+                Launch Agent Session
+            </button>
+            {showPicker && (
+                <AgentPicker
+                    position="inline"
+                    onSelect={(agent) => {
+                        setShowPicker(false);
+                        onLaunch(cwd, agent);
+                    }}
+                    onClose={() => setShowPicker(false)}
+                />
             )}
         </div>
     );

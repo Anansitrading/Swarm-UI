@@ -1,17 +1,13 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import type { SpriteInfo, PoolState } from "../types/sprite";
+import type { SpriteInfo } from "../types/sprite";
 
 interface SpriteState {
     sprites: SpriteInfo[];
-    poolState: PoolState | null;
     loading: boolean;
     error: string | null;
 
     fetchSprites: () => Promise<void>;
-    fetchPoolState: () => Promise<void>;
-    startPoolWatcher: () => Promise<void>;
     execOnSprite: (name: string, command: string) => Promise<string>;
     createCheckpoint: (name: string, description: string) => Promise<string>;
     deleteSprite: (name: string) => Promise<void>;
@@ -21,7 +17,6 @@ interface SpriteState {
 
 export const useSpriteStore = create<SpriteState>((set) => ({
     sprites: [],
-    poolState: null,
     loading: false,
     error: null,
 
@@ -35,26 +30,6 @@ export const useSpriteStore = create<SpriteState>((set) => ({
                 loading: false,
                 error: String(e),
             });
-        }
-    },
-
-    fetchPoolState: async () => {
-        try {
-            const poolState = await invoke<PoolState>("get_bot_pool_state");
-            set({ poolState });
-        } catch {
-            // Pool file may not exist
-        }
-    },
-
-    startPoolWatcher: async () => {
-        try {
-            await invoke("start_pool_watcher");
-            await listen<PoolState>("pool:updated", (event) => {
-                set({ poolState: event.payload });
-            });
-        } catch (e) {
-            console.error("Failed to start pool watcher:", e);
         }
     },
 

@@ -2,10 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { SessionInfo } from "../../types/session";
 import { ContextBar } from "./ContextBar";
+import { SteeringInput } from "./SteeringInput";
+import { SmithPanel } from "./SmithPanel";
 
 interface SessionDetailProps {
     session: SessionInfo;
-    onOpenTerminal: (cwd: string) => void;
+    onOpenTerminal?: (cwd: string) => void;
     onKillProcess?: (pid: number) => void;
     onShowDiff?: (repoPath: string) => void;
     onBack?: () => void;
@@ -21,13 +23,13 @@ interface ConversationMessage {
 
 export function SessionDetail({
     session,
-    onOpenTerminal,
     onShowDiff,
     onBack,
 }: SessionDetailProps) {
     const [detail, setDetail] = useState<SessionInfo>(session);
     const [messages, setMessages] = useState<ConversationMessage[]>([]);
     const [showTools, setShowTools] = useState(false);
+    const [showSmithPanel, setShowSmithPanel] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const refresh = useCallback(async () => {
@@ -189,14 +191,24 @@ export function SessionDetail({
                 )}
             </div>
 
-            {/* Bottom action bar */}
-            <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-swarm-border bg-swarm-bg">
-                <button
-                    onClick={() => onOpenTerminal(cwd)}
-                    className="flex-1 px-3 py-1.5 text-xs bg-swarm-accent/20 text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/30 transition-colors"
-                >
-                    Open Terminal
-                </button>
+            {/* Smith override panel (slides up) */}
+            {showSmithPanel && (
+                <SmithPanel
+                    sessionId={detail.id}
+                    onClose={() => setShowSmithPanel(false)}
+                />
+            )}
+
+            {/* Steering input (replaces Open Terminal) */}
+            <SteeringInput
+                sessionId={detail.id}
+                cwd={cwd}
+                status={detail.status.type}
+                onSmithConfig={() => setShowSmithPanel((v) => !v)}
+            />
+
+            {/* Model + token info footer */}
+            <div className="shrink-0 flex items-center justify-end px-3 py-0.5 bg-swarm-bg border-t border-swarm-border/50">
                 <div className="text-[10px] text-swarm-text-dim font-mono">
                     {detail.model ? formatModel(detail.model) : ""}
                     {detail.total_output_tokens > 0 &&

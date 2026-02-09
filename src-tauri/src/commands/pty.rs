@@ -193,6 +193,11 @@ pub async fn pty_list(state: State<'_, AppState>) -> Result<Vec<PtyInfo>, AppErr
     Ok(infos)
 }
 
+/// Public base64 encode for use by other command modules
+pub fn base64_encode_pub(data: &[u8]) -> String {
+    base64_encode(data)
+}
+
 // Simple base64 encode/decode to avoid adding another dep
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

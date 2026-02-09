@@ -5,20 +5,19 @@ export interface SpriteInfo {
     region?: string;
 }
 
-export interface BotSlot {
-    slot: number;
-    bot_name: string | null;
-    sprite_name: string | null;
+export interface SpriteSessionInfo {
+    pid: string;
+    command: string;
     status: string;
-    ticket_id: string | null;
-    role: string | null;
-    claimed_at: string | null;
-    heartbeat: string | null;
 }
 
-export interface PoolState {
-    slots: BotSlot[];
-    total: number;
-    active: number;
-    idle: number;
+export interface SpriteClaudeSessionInfo {
+    session_id: string;
+    project_dir: string;
+    jsonl_path: string;
+}
+
+export interface SpriteTeamInfo {
+    name: string;
+    member_count: number;
 }

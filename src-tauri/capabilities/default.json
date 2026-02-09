@@ -1,0 +1,28 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Swarm-UI main window",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-read-dir",
+    "dialog:default",
+    "dialog:allow-open",
+    "shell:default",
+    "shell:allow-open",
+    "store:default",
+    "opener:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/.cortex/**" },
+        { "path": "$HOME/**" }
+      ]
+    }
+  ]
+}

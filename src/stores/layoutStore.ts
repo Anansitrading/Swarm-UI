@@ -5,11 +5,11 @@ interface LayoutState {
     mode: LayoutMode;
     panes: PaneConfig[];
     sidebarCollapsed: boolean;
-    sidebarTab: "sessions" | "sprites" | "pool" | "settings";
+    sidebarTab: "sessions" | "teams" | "sprites" | "settings";
 
     setMode: (mode: LayoutMode, keepPanes?: boolean) => void;
     toggleSidebar: () => void;
-    setSidebarTab: (tab: "sessions" | "sprites" | "pool" | "settings") => void;
+    setSidebarTab: (tab: "sessions" | "teams" | "sprites" | "settings") => void;
     updatePane: (index: number, config: Partial<PaneConfig>) => void;
     addPane: (config: PaneConfig) => void;
     removePane: (id: string) => void;

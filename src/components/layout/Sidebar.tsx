@@ -1,7 +1,7 @@
 import { useLayoutStore } from "../../stores/layoutStore";
 import { SessionList } from "../session/SessionList";
 import { SpriteList } from "../sprite/SpriteList";
-import { BotPoolView } from "../sprite/BotPoolView";
+import { TeamList } from "../team/TeamList";
 import { SettingsPanel } from "../settings/SettingsPanel";
 
 interface SidebarProps {
@@ -10,8 +10,8 @@ interface SidebarProps {
 
 const TABS = [
     { key: "sessions" as const, label: "Sessions" },
+    { key: "teams" as const, label: "Teams" },
     { key: "sprites" as const, label: "Sprites" },
-    { key: "pool" as const, label: "Bot Pool" },
     { key: "settings" as const, label: "Settings" },
 ];
 
@@ -42,11 +42,9 @@ export function Sidebar({ onSpriteSelect }: SidebarProps) {
             {/* Tab content */}
             <div className="flex-1 overflow-y-auto">
                 {sidebarTab === "sessions" && <SessionList />}
+                {sidebarTab === "teams" && <TeamList />}
                 {sidebarTab === "sprites" && (
                     <SpriteList onSelect={onSpriteSelect} />
-                )}
-                {sidebarTab === "pool" && (
-                    <BotPoolView onSlotClick={onSpriteSelect} />
                 )}
                 {sidebarTab === "settings" && <SettingsPanel />}
             </div>

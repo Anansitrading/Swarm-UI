@@ -154,6 +154,135 @@ pub async fn sprite_ws_kill(id: String, state: State<'_, AppState>) -> Result<()
     crate::sprites_ws::ws_kill(&id, &state.ws_state).await
 }
 
+/// List exec sessions running on a sprite
+#[tauri::command]
+pub async fn sprite_list_sessions(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteSessionInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "ps aux --no-headers 2>/dev/null | grep -v 'grep' | head -20 || echo ''",
+        )
+        .await?;
+    // Parse process list into session entries
+    let mut sessions = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(11, char::is_whitespace).collect();
+        if parts.len() >= 11 {
+            let cmd = parts[10].to_string();
+            let pid = parts[1].to_string();
+            if cmd.contains("claude") || cmd.contains("node") || cmd.contains("bash") {
+                sessions.push(SpriteSessionInfo {
+                    pid,
+                    command: cmd,
+                    status: "running".to_string(),
+                });
+            }
+        }
+    }
+    Ok(sessions)
+}
+
+/// List Claude Code sessions found on a sprite
+#[tauri::command]
+pub async fn sprite_list_claude_sessions(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteClaudeSessionInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -20",
+        )
+        .await?;
+
+    let mut sessions = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Format: "1738000000.123 /root/.claude/projects/-home-devuser-MyProject/abc123.jsonl"
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            let path = parts[1];
+            // Extract project dir name and session id from path
+            if let Some(fname) = path.rsplit('/').next() {
+                let session_id = fname.trim_end_matches(".jsonl").to_string();
+                // Extract project path from parent directory name
+                let project_dir = path.rsplit('/').nth(1).unwrap_or("").to_string();
+                sessions.push(SpriteClaudeSessionInfo {
+                    session_id,
+                    project_dir,
+                    jsonl_path: path.to_string(),
+                });
+            }
+        }
+    }
+    Ok(sessions)
+}
+
+/// List Claude agent teams on a sprite
+#[tauri::command]
+pub async fn sprite_list_teams(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteTeamInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "for d in ~/.claude/teams/*/; do [ -f \"$d/config.json\" ] && echo \"$(basename $d)|$(cat $d/config.json 2>/dev/null)\"; done 2>/dev/null",
+        )
+        .await?;
+
+    let mut teams = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, '|').collect();
+        if parts.len() == 2 {
+            let team_name = parts[0].to_string();
+            let member_count = parts[1].matches("\"name\"").count() as u32;
+            teams.push(SpriteTeamInfo {
+                name: team_name,
+                member_count,
+            });
+        }
+    }
+    Ok(teams)
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpriteSessionInfo {
+    pub pid: String,
+    pub command: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpriteClaudeSessionInfo {
+    pub session_id: String,
+    pub project_dir: String,
+    pub jsonl_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpriteTeamInfo {
+    pub name: String,
+    pub member_count: u32,
+}
+
 /// Configure the Sprites API client from settings
 #[tauri::command]
 pub async fn sprite_configure(

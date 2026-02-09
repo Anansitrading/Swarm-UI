@@ -15,6 +15,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -30,6 +31,7 @@ pub fn run() {
             commands::session::list_sessions,
             commands::session::get_session_detail,
             commands::session::get_conversation,
+            commands::session::inject_session_message,
             // Process commands
             commands::process::find_claude_processes,
             commands::process::kill_process,
@@ -41,6 +43,10 @@ pub fn run() {
             commands::sprite::sprite_restore_checkpoint,
             commands::sprite::sprite_delete,
             commands::sprite::sprite_create,
+            // Sprite introspection commands
+            commands::sprite::sprite_list_sessions,
+            commands::sprite::sprite_list_claude_sessions,
+            commands::sprite::sprite_list_teams,
             // Sprite WebSocket terminal commands
             commands::sprite::sprite_ws_spawn,
             commands::sprite::sprite_ws_write,
@@ -58,10 +64,17 @@ pub fn run() {
             // Filesystem commands
             commands::filesystem::read_file,
             commands::filesystem::read_file_range,
+            // Agent commands
+            commands::agent::list_agents,
+            commands::agent::list_sprite_agents,
+            commands::agent::save_smith_override,
+            commands::agent::load_smith_override,
+            // Team commands
+            commands::team::list_teams,
+            commands::team::get_team,
             // Watcher commands
             watchers::jsonl_watcher::start_session_watcher,
-            watchers::pool_watcher::get_bot_pool_state,
-            watchers::pool_watcher::start_pool_watcher,
+            watchers::team_watcher::start_team_watcher,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Swarm-UI");
