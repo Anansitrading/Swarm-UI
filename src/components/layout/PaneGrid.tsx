@@ -23,7 +23,7 @@ function agentCommand(agentName: string): { shell: string; args: string[] } {
         args: [
             "--dangerously-skip-permissions",
             "--chrome",
-            "--agent-file",
+            "--agent",
             agentName,
         ],
     };
