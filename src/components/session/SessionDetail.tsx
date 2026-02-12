@@ -7,7 +7,8 @@ import { SmithPanel } from "./SmithPanel";
 
 interface SessionDetailProps {
     session: SessionInfo;
-    onOpenTerminal?: (cwd: string) => void;
+    onOpenTerminal?: (cwd: string, agentName?: string) => void;
+    onResumeSession?: (sessionId: string, cwd: string) => void;
     onKillProcess?: (pid: number) => void;
     onShowDiff?: (repoPath: string) => void;
     onBack?: () => void;
@@ -23,9 +24,12 @@ interface ConversationMessage {
 
 export function SessionDetail({
     session,
+    onOpenTerminal: _onOpenTerminal,
+    onResumeSession,
     onShowDiff,
     onBack,
 }: SessionDetailProps) {
+    void _onOpenTerminal; // Available for future terminal launch from detail view
     const [detail, setDetail] = useState<SessionInfo>(session);
     const [messages, setMessages] = useState<ConversationMessage[]>([]);
     const [showTools, setShowTools] = useState(false);
@@ -88,30 +92,27 @@ export function SessionDetail({
           );
 
     return (
-        <div className="flex flex-col h-full bg-swarm-surface overflow-hidden">
+        <div className="flex flex-col h-full bg-swarm-surface overflow-hidden select-text">
             {/* Header bar - compact like AgentHub */}
             <div className="shrink-0 border-b border-swarm-border">
                 {/* Session ID + actions row */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-swarm-bg">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                         {onBack && (
                             <button
                                 onClick={onBack}
-                                className="px-1.5 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors mr-1"
+                                className="px-1.5 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors mr-1 shrink-0"
                                 title="Back to overview"
                             >
                                 &larr;
                             </button>
                         )}
                         <StatusDot status={detail.status} />
-                        <span className="text-xs font-mono text-swarm-text-dim">
-                            Session:{" "}
-                            <span className="text-swarm-text">
-                                {detail.id.slice(0, 8)}
-                            </span>
+                        <span className="text-[10px] font-mono text-swarm-text-dim truncate select-all" title={detail.id}>
+                            {detail.id}
                         </span>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 shrink-0">
                         {onShowDiff && (
                             <button
                                 onClick={() => onShowDiff(cwd)}
@@ -120,12 +121,15 @@ export function SessionDetail({
                                 Diff
                             </button>
                         )}
-                        <button
-                            onClick={() => refresh()}
-                            className="px-2 py-0.5 text-[10px] text-swarm-text-dim border border-swarm-border rounded hover:text-swarm-text hover:border-swarm-accent/30 transition-colors"
-                        >
-                            Refresh
-                        </button>
+                        {onResumeSession && (detail.status.type === "idle" || detail.status.type === "stopped") && (
+                            <button
+                                onClick={() => onResumeSession(detail.id, cwd)}
+                                className="px-2 py-0.5 text-[10px] text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/10 transition-colors"
+                                title={`Resume session ${detail.id}`}
+                            >
+                                Resume
+                            </button>
+                        )}
                     </div>
                 </div>
 

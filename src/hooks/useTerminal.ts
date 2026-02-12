@@ -67,9 +67,15 @@ export function useTerminal({ ptyId, containerRef }: UseTerminalOptions) {
         fitAddon.fit();
 
         // Handle user input -> PTY
+        // Convert the JS string to UTF-8 bytes, then base64 encode
         term.onData((data) => {
-            const encoded = btoa(data);
-            writeToTerminal(ptyId, encoded);
+            const encoder = new TextEncoder();
+            const bytes = encoder.encode(data);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            writeToTerminal(ptyId, btoa(binary));
         });
 
         // Handle resize -> PTY
@@ -78,12 +84,17 @@ export function useTerminal({ ptyId, containerRef }: UseTerminalOptions) {
         });
 
         // Listen for PTY output -> terminal
+        // Decode base64 to Uint8Array for proper binary/UTF-8 handling
         const unlisten = await listen<string>(`pty:data:${ptyId}`, (event) => {
             try {
-                const decoded = atob(event.payload);
-                term.write(decoded);
+                const binaryStr = atob(event.payload);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                term.write(bytes);
             } catch {
-                // Handle non-base64 data
+                // Handle non-base64 data as raw string fallback
                 term.write(event.payload);
             }
         });

@@ -10,6 +10,11 @@ body {
   color: #e2e8f0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
+  user-select: text;
+}
+
+/* Prevent selection on UI chrome (toolbar, sidebar tabs, buttons) */
+button, [role="tab"], nav {
   user-select: none;
 }
 

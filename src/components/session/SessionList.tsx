@@ -21,6 +21,8 @@ export function SessionList() {
     } = useSessionStore();
     const [search, setSearch] = useState("");
     const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
+    // Track repos the user has manually collapsed so auto-expand doesn't fight them
+    const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         fetchSessions();
@@ -32,7 +34,6 @@ export function SessionList() {
         const groups = new Map<string, SessionInfo[]>();
 
         for (const session of sessions) {
-            // Extract repo name from project_path
             const repoPath = session.project_path || session.encoded_path;
             const existing = groups.get(repoPath) || [];
             existing.push(session);
@@ -52,7 +53,6 @@ export function SessionList() {
             });
         }
 
-        // Sort repos by most recent session
         result.sort((a, b) => {
             const aMax = Math.max(...a.sessions.map((s) => s.last_modified));
             const bMax = Math.max(...b.sessions.map((s) => s.last_modified));
@@ -83,16 +83,30 @@ export function SessionList() {
     const toggleRepo = (path: string) => {
         setExpandedRepos((prev) => {
             const next = new Set(prev);
-            if (next.has(path)) next.delete(path);
-            else next.add(path);
+            if (next.has(path)) {
+                next.delete(path);
+                // Remember that user manually collapsed this
+                setManuallyCollapsed((mc) => new Set(mc).add(path));
+            } else {
+                next.add(path);
+                // User re-expanded, clear the manual collapse flag
+                setManuallyCollapsed((mc) => {
+                    const updated = new Set(mc);
+                    updated.delete(path);
+                    return updated;
+                });
+            }
             return next;
         });
     };
 
-    // Auto-expand repos with selected session or active sessions
+    // Auto-expand repos with selected session or active sessions,
+    // but respect repos the user has manually collapsed
     useEffect(() => {
         const newExpanded = new Set(expandedRepos);
+        let changed = false;
         for (const group of repoGroups) {
+            if (manuallyCollapsed.has(group.path)) continue;
             const hasSelected = group.sessions.some(
                 (s) => s.id === selectedSessionId,
             );
@@ -101,14 +115,15 @@ export function SessionList() {
                     s.status.type === "thinking" ||
                     s.status.type === "executing_tool",
             );
-            if (hasSelected || hasActive) {
+            if ((hasSelected || hasActive) && !newExpanded.has(group.path)) {
                 newExpanded.add(group.path);
+                changed = true;
             }
         }
-        if (newExpanded.size !== expandedRepos.size) {
+        if (changed) {
             setExpandedRepos(newExpanded);
         }
-    }, [selectedSessionId, repoGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [selectedSessionId, repoGroups, manuallyCollapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const totalSessions = sessions.length;
 

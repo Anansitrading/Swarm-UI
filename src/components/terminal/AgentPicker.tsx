@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 interface AgentDef {
     name: string;
@@ -10,18 +11,22 @@ interface AgentDef {
 interface AgentPickerProps {
     onSelect: (agentName: string) => void;
     onClose: () => void;
-    /** Position anchor: "toolbar" for top-right, "inline" for in-place */
+    /** Position anchor: "toolbar" for top-right, "inline" for centered */
     position?: "toolbar" | "inline";
+    /** Optional anchor element ref for positioning near a button */
+    anchorRef?: React.RefObject<HTMLElement | null>;
 }
 
 export function AgentPicker({
     onSelect,
     onClose,
     position = "toolbar",
+    anchorRef,
 }: AgentPickerProps) {
     const [agents, setAgents] = useState<AgentDef[]>([]);
     const [loading, setLoading] = useState(true);
     const ref = useRef<HTMLDivElement>(null);
+    const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
     useEffect(() => {
         (async () => {
@@ -30,7 +35,6 @@ export function AgentPicker({
                 setAgents(list);
             } catch (e) {
                 console.error("Failed to list agents:", e);
-                // Fallback to just claude
                 setAgents([
                     {
                         name: "claude",
@@ -43,37 +47,57 @@ export function AgentPicker({
         })();
     }, []);
 
-    // Close on click outside (use mouseup + RAF to avoid racing with the toggle button's click)
+    // Position relative to anchor element
     useEffect(() => {
-        let active = false;
-        const id = requestAnimationFrame(() => {
-            active = true;
-        });
-        const handler = (e: MouseEvent) => {
-            if (
-                active &&
-                ref.current &&
-                !ref.current.contains(e.target as Node)
-            ) {
-                onClose();
+        if (anchorRef?.current) {
+            const rect = anchorRef.current.getBoundingClientRect();
+            if (position === "toolbar") {
+                setCoords({ top: rect.bottom + 4, left: rect.right - 256 });
+            } else {
+                setCoords({ top: rect.bottom + 4, left: rect.left });
             }
-        };
-        document.addEventListener("mouseup", handler);
-        return () => {
-            cancelAnimationFrame(id);
-            document.removeEventListener("mouseup", handler);
-        };
+        } else if (position === "toolbar") {
+            setCoords({ top: 44, left: window.innerWidth - 264 });
+        } else {
+            // Center in viewport
+            setCoords({ top: window.innerHeight / 2 - 100, left: window.innerWidth / 2 - 128 });
+        }
+    }, [anchorRef, position]);
+
+    // Close on click outside
+    const handleClickOutside = useCallback((e: MouseEvent) => {
+        if (ref.current && !ref.current.contains(e.target as Node)) {
+            onClose();
+        }
     }, [onClose]);
 
-    const posClass =
-        position === "toolbar"
-            ? "absolute right-0 top-full mt-1 z-50"
-            : "absolute bottom-full left-0 mb-1 z-50";
+    useEffect(() => {
+        // Delay registering to avoid closing on the same click that opens
+        const id = requestAnimationFrame(() => {
+            document.addEventListener("mousedown", handleClickOutside);
+        });
+        return () => {
+            cancelAnimationFrame(id);
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [handleClickOutside]);
 
-    return (
+    // Close on Escape
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") onClose();
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, [onClose]);
+
+    if (!coords) return null;
+
+    const picker = (
         <div
             ref={ref}
-            className={`${posClass} w-64 bg-swarm-surface border border-swarm-border rounded-lg shadow-xl overflow-hidden`}
+            className="fixed z-[9999] w-64 bg-swarm-surface border border-swarm-border rounded-lg shadow-xl overflow-hidden"
+            style={{ top: coords.top, left: Math.max(8, coords.left) }}
         >
             <div className="px-3 py-1.5 border-b border-swarm-border bg-swarm-bg">
                 <span className="text-[10px] text-swarm-text-dim uppercase tracking-wide">
@@ -109,6 +133,8 @@ export function AgentPicker({
             )}
         </div>
     );
+
+    return createPortal(picker, document.body);
 }
 
 function AgentIcon({ name }: { name: string }) {

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useLayoutStore } from "../../stores/layoutStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { AgentPicker } from "../terminal/AgentPicker";
@@ -53,10 +53,11 @@ function agentCommand(agentName: string): { shell: string; args: string[] } {
 }
 
 export function Toolbar() {
-    const { mode, setMode, toggleSidebar, sidebarCollapsed, addPane } =
+    const { mode, setMode, toggleSidebar, sidebarCollapsed, addPane, panes, updatePane } =
         useLayoutStore();
     const { spawnTerminal } = useTerminalStore();
     const [showAgentPicker, setShowAgentPicker] = useState(false);
+    const termBtnRef = useRef<HTMLButtonElement>(null);
 
     const handleSpawnAgent = useCallback(
         async (agentName: string) => {
@@ -67,16 +68,20 @@ export function Toolbar() {
                     shell: cmd.shell,
                     args: cmd.args,
                 });
-                addPane({
-                    id: `terminal-${info.id}`,
-                    type: "terminal",
-                    terminalId: info.id,
-                });
+                if (panes.length > 0) {
+                    updatePane(0, { terminalId: info.id, type: "terminal" });
+                } else {
+                    addPane({
+                        id: `terminal-${info.id}`,
+                        type: "terminal",
+                        terminalId: info.id,
+                    });
+                }
             } catch (e) {
                 console.error("Failed to spawn agent terminal:", e);
             }
         },
-        [spawnTerminal, addPane],
+        [spawnTerminal, addPane, panes, updatePane],
     );
 
     return (
@@ -123,8 +128,9 @@ export function Toolbar() {
                 ))}
             </div>
 
-            <div className="relative flex items-center gap-1">
+            <div className="flex items-center gap-1">
                 <button
+                    ref={termBtnRef}
                     onClick={() => setShowAgentPicker((v) => !v)}
                     className="text-swarm-text-dim hover:text-swarm-text px-2 py-1 rounded text-xs transition-colors hover:bg-swarm-accent/10"
                     title="New Agent Session (Ctrl+T)"
@@ -136,6 +142,7 @@ export function Toolbar() {
                         onSelect={handleSpawnAgent}
                         onClose={() => setShowAgentPicker(false)}
                         position="toolbar"
+                        anchorRef={termBtnRef}
                     />
                 )}
             </div>

@@ -65,7 +65,7 @@ function gridStyle(mode: LayoutMode): React.CSSProperties {
 }
 
 export function PaneGrid() {
-    const { mode, panes, addPane, setMode, updatePane } = useLayoutStore();
+    const { mode, panes, addPane, updatePane } = useLayoutStore();
     const { selectedSessionId, sessions, selectSession } = useSessionStore();
     const { spawnTerminal } = useTerminalStore();
     const [diffState, setDiffState] = useState<{
@@ -88,12 +88,6 @@ export function PaneGrid() {
                     config = { ...config, shell: cmd.shell, args: cmd.args };
                 }
                 const info = await spawnTerminal(config);
-                // Switch to list mode (keeps panes intact) so session + terminal
-                // show side by side
-                if (mode === "single") {
-                    setMode("list", true);
-                }
-                // Ensure pane 0 has the terminal ID
                 if (panes.length > 0) {
                     updatePane(0, { terminalId: info.id, type: "terminal" });
                 } else {
@@ -107,7 +101,31 @@ export function PaneGrid() {
                 console.error("Failed to open terminal:", e);
             }
         },
-        [spawnTerminal, addPane, mode, setMode, panes, updatePane],
+        [spawnTerminal, addPane, panes, updatePane],
+    );
+
+    const handleResumeSession = useCallback(
+        async (sessionId: string, cwd: string) => {
+            try {
+                const info = await spawnTerminal({
+                    shell: "claude",
+                    args: ["--resume", sessionId, "--dangerously-skip-permissions"],
+                    cwd,
+                });
+                if (panes.length > 0) {
+                    updatePane(0, { terminalId: info.id, type: "terminal" });
+                } else {
+                    addPane({
+                        id: `terminal-${info.id}`,
+                        type: "terminal",
+                        terminalId: info.id,
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to resume session:", e);
+            }
+        },
+        [spawnTerminal, addPane, panes, updatePane],
     );
 
     const handleKillProcess = useCallback(async (pid: number) => {
@@ -236,6 +254,7 @@ export function PaneGrid() {
                     <SessionDetail
                         session={selectedSession}
                         onOpenTerminal={handleOpenTerminal}
+                        onResumeSession={handleResumeSession}
                         onKillProcess={handleKillProcess}
                         onShowDiff={handleShowDiff}
                         onBack={handleBack}
@@ -244,7 +263,15 @@ export function PaneGrid() {
             );
         }
 
-        // No session selected - show monitoring overview in single mode too
+        // No session selected - show terminal if one is open, else monitoring overview
+        if (panes.length > 0 && panes[0].terminalId) {
+            return (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <TerminalPane key={panes[0].terminalId} ptyId={panes[0].terminalId} />
+                </div>
+            );
+        }
+
         return (
             <div className="flex-1 min-h-0 overflow-y-auto p-2">
                 <MonitoringOverview
@@ -301,7 +328,7 @@ export function PaneGrid() {
                     </div>
                     <div className="min-h-0 overflow-hidden">
                         {panes.length > 0 && panes[0].terminalId ? (
-                            <TerminalPane ptyId={panes[0].terminalId} />
+                            <TerminalPane key={panes[0].terminalId} ptyId={panes[0].terminalId} />
                         ) : (
                             <AgentLauncher
                                 cwd={
@@ -316,7 +343,15 @@ export function PaneGrid() {
             );
         }
 
-        // No session selected - show monitoring overview
+        // No session selected - show terminal if one is open, else monitoring overview
+        if (panes.length > 0 && panes[0].terminalId) {
+            return (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <TerminalPane key={panes[0].terminalId} ptyId={panes[0].terminalId} />
+                </div>
+            );
+        }
+
         return (
             <div className="flex-1 min-h-0 overflow-y-auto p-2">
                 <MonitoringOverview
@@ -341,6 +376,7 @@ export function PaneGrid() {
                     mode={mode}
                     sessions={sessions}
                     onOpenTerminal={handleOpenTerminal}
+                    onResumeSession={handleResumeSession}
                     onKillProcess={handleKillProcess}
                     onShowDiff={handleShowDiff}
                 />
@@ -405,12 +441,14 @@ function MultiSessionView({
     mode,
     sessions,
     onOpenTerminal,
+    onResumeSession,
     onKillProcess,
     onShowDiff,
 }: {
     mode: LayoutMode;
     sessions: import("../../types/session").SessionInfo[];
     onOpenTerminal: (cwd: string) => void;
+    onResumeSession: (sessionId: string, cwd: string) => void;
     onKillProcess: (pid: number) => void;
     onShowDiff: (repoPath: string) => void;
 }) {
@@ -428,6 +466,7 @@ function MultiSessionView({
                     <SessionDetail
                         session={session}
                         onOpenTerminal={onOpenTerminal}
+                        onResumeSession={onResumeSession}
                         onKillProcess={onKillProcess}
                         onShowDiff={onShowDiff}
                     />

@@ -47,14 +47,16 @@ export function SessionCard({ session, selected, onClick }: SessionCardProps) {
                 <span className="ml-auto shrink-0">
                     <StatusDot status={session.status} />
                 </span>
+            </div>
 
-                {/* Action buttons */}
-                <span className="text-swarm-text-dim hover:text-swarm-text text-xs shrink-0">
-                    +
+            {/* Session ID for traceability */}
+            <div className="mt-0.5 pl-5">
+                <span className="text-[9px] font-mono text-swarm-text-dim/60 select-all">
+                    {session.id}
                 </span>
             </div>
 
-            {/* Second line: slug/first message + time */}
+            {/* Model + time */}
             <div className="flex items-center justify-between mt-0.5 pl-5">
                 {session.model && (
                     <span className="text-[10px] text-swarm-text-dim font-mono">
