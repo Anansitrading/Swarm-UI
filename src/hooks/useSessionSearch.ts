@@ -23,7 +23,8 @@ export interface SearchResult {
 
 export function useSessionSearch(sessions: SessionInfo[]) {
     const miniSearchRef = useRef<MiniSearch<SearchableSession> | null>(null);
-    const [query, setQuery] = useState("");
+    const [inputValue, setInputValue] = useState("");
+    const [query, setQuery] = useState(""); // Debounced query
     // Tracks sessions whose metadata has been indexed
     const metaIndexedRef = useRef<Set<string>>(new Set());
     // Tracks sessions whose conversation text has been fetched and indexed
@@ -31,10 +32,22 @@ export function useSessionSearch(sessions: SessionInfo[]) {
     const [isIndexing, setIsIndexing] = useState(false);
     // Trigger re-render after content indexing batches complete
     const [contentIndexVersion, setContentIndexVersion] = useState(0);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const setStoreQuery = useSessionStore(s => s.setSearchQuery);
 
-    // Sync query to store so SessionDetail can read it
+    // Debounce: update actual query 200ms after user stops typing
+    useEffect(() => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            setQuery(inputValue);
+        }, 200);
+        return () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+        };
+    }, [inputValue]);
+
+    // Sync debounced query to store so SessionDetail can read it
     useEffect(() => {
         setStoreQuery(query);
     }, [query, setStoreQuery]);
@@ -91,8 +104,8 @@ export function useSessionSearch(sessions: SessionInfo[]) {
 
         if (needsContent.length === 0) return;
 
-        // Process in batches of 20
-        const batch = needsContent.slice(0, 20);
+        // Process in batches of 50 (Rust uses rayon for parallel file I/O)
+        const batch = needsContent.slice(0, 50);
         setIsIndexing(true);
 
         invoke<[string, string][]>("get_sessions_search_text", { jsonlPaths: batch })
@@ -184,8 +197,9 @@ export function useSessionSearch(sessions: SessionInfo[]) {
     }, [query]);
 
     return {
-        query,
-        setQuery,
+        query: inputValue,
+        setQuery: setInputValue,
+        debouncedQuery: query,
         results,
         matchedSessionIds,
         isSearching: query.trim().length > 0,

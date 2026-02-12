@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, memo } from "react";
 import type { SessionInfo } from "../../types/session";
 import { useSessionStore } from "../../stores/sessionStore";
 import { HighlightText } from "./HighlightText";
@@ -142,12 +142,19 @@ export function SessionDetail({
         };
     }, [searchTerms]);
 
+    // Memoize tool call count (avoid recomputing on every render)
+    const toolCallCount = useMemo(() =>
+        messages.filter(m => m.content_type !== "text" && m.content_type !== "thinking").length,
+        [messages],
+    );
+
     // Filter messages based on showTools toggle
-    const displayMessages = showTools
-        ? messages
-        : messages.filter(
-              (m) => m.content_type === "text" || m.content_type === "thinking",
-          );
+    const displayMessages = useMemo(() =>
+        showTools
+            ? messages
+            : messages.filter(m => m.content_type === "text" || m.content_type === "thinking"),
+        [messages, showTools],
+    );
 
     // Indices of messages that contain search matches
     const matchingMsgIndices = useMemo(() => {
@@ -334,15 +341,7 @@ export function SessionDetail({
                             onChange={(e) => setShowTools(e.target.checked)}
                             className="w-3 h-3 accent-swarm-accent"
                         />
-                        Show tool calls (
-                        {
-                            messages.filter(
-                                (m) =>
-                                    m.content_type !== "text" &&
-                                    m.content_type !== "thinking",
-                            ).length
-                        }
-                        )
+                        Show tool calls ({toolCallCount})
                     </label>
                 </div>
 
@@ -393,7 +392,7 @@ export function SessionDetail({
     );
 }
 
-function MessageBubble({ msgIndex, message, getHighlightRanges, isFocusedMatch }: {
+const MessageBubble = memo(function MessageBubble({ msgIndex, message, getHighlightRanges, isFocusedMatch }: {
     msgIndex: number;
     message: ConversationMessage;
     getHighlightRanges: ((text: string) => { start: number; end: number }[]) | null;
@@ -473,7 +472,7 @@ function MessageBubble({ msgIndex, message, getHighlightRanges, isFocusedMatch }
             </div>
         </div>
     );
-}
+});
 
 function StatusDot({ status }: { status: SessionInfo["status"] }) {
     const colors: Record<string, string> = {

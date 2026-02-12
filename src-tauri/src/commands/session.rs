@@ -2,6 +2,7 @@ use crate::error::AppError;
 use crate::parsers::session_types::{ConversationMessage, SessionInfo, SessionStatus};
 use crate::state::{AppState, PtyInfo, PtyInstance};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
+use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
 use std::thread;
@@ -10,8 +11,15 @@ use uuid::Uuid;
 
 /// List all discovered Claude Code sessions from ~/.claude/projects/
 /// Parses JSONL files for live status detection.
+/// Uses spawn_blocking + rayon for parallel file parsing.
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
+    tokio::task::spawn_blocking(|| list_sessions_blocking())
+        .await
+        .map_err(|e| AppError::Internal(format!("Join error: {e}")))?
+}
+
+fn list_sessions_blocking() -> Result<Vec<SessionInfo>, AppError> {
     let claude_dir = dirs::home_dir()
         .ok_or_else(|| AppError::Internal("No home dir".into()))?
         .join(".claude")
@@ -21,7 +29,8 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
         return Ok(vec![]);
     }
 
-    let mut sessions = Vec::new();
+    // Collect all JSONL file paths first (fast directory scan)
+    let mut jsonl_paths: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
 
     for entry in fs::read_dir(&claude_dir)? {
         let entry = entry?;
@@ -30,24 +39,25 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
             continue;
         }
 
-        // Find .jsonl files in this project directory
-        for file_entry in fs::read_dir(&path)? {
-            let file_entry = file_entry?;
-            let file_path = file_entry.path();
-            if file_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-
-            let path_str = file_path.to_string_lossy().to_string();
-
-            // Parse the JSONL file for full session info including status
-            match crate::parsers::jsonl_parser::parse_session_file(&path_str) {
-                Ok(info) => {
-                    sessions.push(info);
+        if let Ok(files) = fs::read_dir(&path) {
+            for file_entry in files.flatten() {
+                let file_path = file_entry.path();
+                if file_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                    jsonl_paths.push((path.clone(), file_path));
                 }
+            }
+        }
+    }
+
+    // Parse all JSONL files in parallel using rayon
+    let mut sessions: Vec<SessionInfo> = jsonl_paths
+        .par_iter()
+        .map(|(dir_path, file_path)| {
+            let path_str = file_path.to_string_lossy().to_string();
+            match crate::parsers::jsonl_parser::parse_session_file(&path_str) {
+                Ok(info) => info,
                 Err(e) => {
-                    // Fallback: create basic entry from filesystem metadata
-                    let dir_name = path
+                    let dir_name = dir_path
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
@@ -57,7 +67,7 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_string();
-                    let modified = fs::metadata(&file_path)
+                    let modified = fs::metadata(file_path)
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -65,7 +75,7 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
                         .unwrap_or(0);
 
                     tracing::warn!("Failed to parse {path_str}: {e}");
-                    sessions.push(SessionInfo {
+                    SessionInfo {
                         id: session_id,
                         project_path: decode_claude_path(&dir_name),
                         encoded_path: dir_name,
@@ -81,11 +91,11 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
                         cache_read_tokens: 0,
                         git_branch: None,
                         cwd: None,
-                    });
+                    }
                 }
             }
-        }
-    }
+        })
+        .collect();
 
     // Sort by last modified descending
     sessions.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
@@ -96,27 +106,43 @@ pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
 /// Get detailed session data by parsing the JSONL file
 #[tauri::command]
 pub async fn get_session_detail(jsonl_path: String) -> Result<SessionInfo, AppError> {
-    crate::parsers::jsonl_parser::parse_session_file(&jsonl_path)
+    tokio::task::spawn_blocking(move || {
+        crate::parsers::jsonl_parser::parse_session_file(&jsonl_path)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Join error: {e}")))?
 }
 
 /// Get conversation messages for display in the UI
 #[tauri::command]
 pub async fn get_conversation(jsonl_path: String) -> Result<Vec<ConversationMessage>, AppError> {
-    crate::parsers::jsonl_parser::extract_conversation(&jsonl_path)
+    tokio::task::spawn_blocking(move || {
+        crate::parsers::jsonl_parser::extract_conversation(&jsonl_path)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Join error: {e}")))?
 }
 
 /// Get search text for multiple sessions (for indexing).
-/// Returns a map of jsonl_path -> search_text.
+/// Returns a vec of (jsonl_path, search_text).
+/// Uses rayon for parallel file reading + spawn_blocking to avoid blocking async runtime.
 #[tauri::command]
 pub async fn get_sessions_search_text(
     jsonl_paths: Vec<String>,
 ) -> Result<Vec<(String, String)>, AppError> {
-    let mut results = Vec::new();
-    for path in jsonl_paths {
-        let text = crate::parsers::jsonl_parser::extract_search_text(&path).unwrap_or_default();
-        results.push((path, text));
-    }
-    Ok(results)
+    tokio::task::spawn_blocking(move || {
+        let results: Vec<(String, String)> = jsonl_paths
+            .par_iter()
+            .map(|path| {
+                let text =
+                    crate::parsers::jsonl_parser::extract_search_text(path).unwrap_or_default();
+                (path.clone(), text)
+            })
+            .collect();
+        Ok(results)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Join error: {e}")))?
 }
 
 /// Inject a steering message into a Claude Code session by resuming it in a PTY.

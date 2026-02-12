@@ -4163,6 +4163,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "portable-pty",
+ "rayon",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
