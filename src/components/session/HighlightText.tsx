@@ -9,7 +9,7 @@ export function HighlightText({
     text,
     ranges,
     className = "",
-    highlightClassName = "bg-swarm-accent/30 text-swarm-text rounded-sm",
+    highlightClassName = "bg-amber-400/80 text-gray-950 rounded-sm px-0.5 font-medium",
 }: HighlightTextProps) {
     if (ranges.length === 0) {
         return <span className={className}>{text}</span>;

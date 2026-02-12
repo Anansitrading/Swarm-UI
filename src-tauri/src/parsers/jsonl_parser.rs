@@ -489,7 +489,15 @@ pub fn extract_search_text(path: &str) -> Result<String, AppError> {
                 } else if let Some(text) = content.as_str() {
                     let remaining = MAX_TOTAL.saturating_sub(total_len);
                     if remaining > 0 {
-                        let chunk = if text.len() > remaining { &text[..remaining] } else { text };
+                        let chunk = if text.len() > remaining {
+                            &text[..text.char_indices()
+                                .take_while(|(i, _)| *i <= remaining)
+                                .last()
+                                .map(|(i, c)| i + c.len_utf8())
+                                .unwrap_or(remaining.min(text.len()))]
+                        } else {
+                            text
+                        };
                         total_len += chunk.len();
                         parts.push(chunk.to_string());
                     }

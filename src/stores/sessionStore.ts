@@ -8,9 +8,11 @@ interface SessionState {
     selectedSessionId: string | null;
     loading: boolean;
     error: string | null;
+    searchQuery: string;
 
     fetchSessions: () => Promise<void>;
     selectSession: (id: string | null) => void;
+    setSearchQuery: (q: string) => void;
     startWatcher: () => Promise<void>;
 }
 
@@ -19,6 +21,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     selectedSessionId: null,
     loading: false,
     error: null,
+    searchQuery: "",
 
     fetchSessions: async () => {
         set({ loading: true, error: null });
@@ -32,6 +35,10 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     selectSession: (id) => {
         set({ selectedSessionId: id });
+    },
+
+    setSearchQuery: (q) => {
+        set({ searchQuery: q });
     },
 
     startWatcher: async () => {

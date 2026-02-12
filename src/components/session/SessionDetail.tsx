@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import type { SessionInfo } from "../../types/session";
+import { useSessionStore } from "../../stores/sessionStore";
+import { HighlightText } from "./HighlightText";
 import { ContextBar } from "./ContextBar";
 import { SteeringInput } from "./SteeringInput";
 import { SmithPanel } from "./SmithPanel";
@@ -30,6 +32,7 @@ export function SessionDetail({
     onBack,
 }: SessionDetailProps) {
     void _onOpenTerminal; // Available for future terminal launch from detail view
+    const searchQuery = useSessionStore(s => s.searchQuery);
     const [detail, setDetail] = useState<SessionInfo>(session);
     const [messages, setMessages] = useState<ConversationMessage[]>([]);
     const [showTools, setShowTools] = useState(false);
@@ -37,12 +40,14 @@ export function SessionDetail({
     const scrollRef = useRef<HTMLDivElement>(null);
     const isUserNearBottomRef = useRef(true);
     const isScrollingProgrammaticallyRef = useRef(false);
+    // Match navigation
+    const [currentMatchIdx, setCurrentMatchIdx] = useState(-1);
+    const hasAutoScrolledRef = useRef(false);
 
     const handleScroll = useCallback(() => {
         if (isScrollingProgrammaticallyRef.current) return;
         const el = scrollRef.current;
         if (!el) return;
-        // User is "near bottom" if within 80px of the bottom
         const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         isUserNearBottomRef.current = distanceFromBottom < 80;
     }, []);
@@ -73,6 +78,7 @@ export function SessionDetail({
     }, [session.jsonl_path]);
 
     useEffect(() => {
+        hasAutoScrolledRef.current = false;
         refresh();
         fetchConversation();
         const interval = setInterval(() => {
@@ -86,19 +92,55 @@ export function SessionDetail({
         setDetail(session);
     }, [session]);
 
-    // Auto-scroll to bottom only when user is already near the bottom
+    // Auto-scroll to bottom only when user is near bottom AND no search active
     useEffect(() => {
+        if (searchQuery.trim()) return; // Don't fight match navigation
         if (scrollRef.current && isUserNearBottomRef.current) {
             isScrollingProgrammaticallyRef.current = true;
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-            // Reset flag after the scroll event fires
             requestAnimationFrame(() => {
                 isScrollingProgrammaticallyRef.current = false;
             });
         }
-    }, [messages]);
+    }, [messages, searchQuery]);
 
     const cwd = detail.cwd || detail.project_path;
+
+    // Compute highlight ranges for search query matches
+    const searchTerms = useMemo(() => {
+        if (!searchQuery.trim()) return null;
+        const terms = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        return terms.length > 0 ? terms : null;
+    }, [searchQuery]);
+
+    const getHighlightRanges = useMemo(() => {
+        if (!searchTerms) return null;
+        return (text: string): { start: number; end: number }[] => {
+            if (!text) return [];
+            const ranges: { start: number; end: number }[] = [];
+            const lower = text.toLowerCase();
+            for (const term of searchTerms) {
+                let pos = 0;
+                while (pos < lower.length) {
+                    const idx = lower.indexOf(term, pos);
+                    if (idx === -1) break;
+                    ranges.push({ start: idx, end: idx + term.length });
+                    pos = idx + 1;
+                }
+            }
+            ranges.sort((a, b) => a.start - b.start);
+            const merged: { start: number; end: number }[] = [];
+            for (const r of ranges) {
+                const last = merged[merged.length - 1];
+                if (last && r.start <= last.end) {
+                    last.end = Math.max(last.end, r.end);
+                } else {
+                    merged.push({ ...r });
+                }
+            }
+            return merged;
+        };
+    }, [searchTerms]);
 
     // Filter messages based on showTools toggle
     const displayMessages = showTools
@@ -107,9 +149,90 @@ export function SessionDetail({
               (m) => m.content_type === "text" || m.content_type === "thinking",
           );
 
+    // Indices of messages that contain search matches
+    const matchingMsgIndices = useMemo(() => {
+        if (!searchTerms) return [];
+        const indices: number[] = [];
+        for (let i = 0; i < displayMessages.length; i++) {
+            const lower = displayMessages[i].text.toLowerCase();
+            if (searchTerms.some(t => lower.includes(t))) {
+                indices.push(i);
+            }
+        }
+        return indices;
+    }, [displayMessages, searchTerms]);
+
+    const totalMatches = matchingMsgIndices.length;
+
+    // Scroll to a specific match message element
+    const scrollToMatch = useCallback((matchIdx: number) => {
+        if (matchIdx < 0 || matchIdx >= matchingMsgIndices.length) return;
+        const msgIndex = matchingMsgIndices[matchIdx];
+        const container = scrollRef.current;
+        if (!container) return;
+        const el = container.querySelector(`[data-msg-idx="${msgIndex}"]`) as HTMLElement | null;
+        if (!el) return;
+
+        isScrollingProgrammaticallyRef.current = true;
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        setCurrentMatchIdx(matchIdx);
+
+        // Brief flash on the focused message
+        el.classList.add("ring-1", "ring-amber-400/60");
+        setTimeout(() => {
+            el.classList.remove("ring-1", "ring-amber-400/60");
+            isScrollingProgrammaticallyRef.current = false;
+        }, 600);
+    }, [matchingMsgIndices]);
+
+    // Auto-scroll to last match when session first loads with a search query
+    useEffect(() => {
+        if (hasAutoScrolledRef.current) return;
+        if (totalMatches === 0) return;
+        // Wait a tick for DOM to render
+        const timer = setTimeout(() => {
+            scrollToMatch(totalMatches - 1);
+            hasAutoScrolledRef.current = true;
+        }, 150);
+        return () => clearTimeout(timer);
+    }, [totalMatches, scrollToMatch]);
+
+    // Navigate: up = older match, down = newer match
+    const goToPrevMatch = useCallback(() => {
+        if (totalMatches === 0) return;
+        const next = currentMatchIdx <= 0 ? totalMatches - 1 : currentMatchIdx - 1;
+        scrollToMatch(next);
+    }, [currentMatchIdx, totalMatches, scrollToMatch]);
+
+    const goToNextMatch = useCallback(() => {
+        if (totalMatches === 0) return;
+        const next = currentMatchIdx >= totalMatches - 1 ? 0 : currentMatchIdx + 1;
+        scrollToMatch(next);
+    }, [currentMatchIdx, totalMatches, scrollToMatch]);
+
+    // Keyboard shortcuts for match navigation
+    useEffect(() => {
+        if (totalMatches === 0) return;
+        const handler = (e: KeyboardEvent) => {
+            // Only capture when no input is focused
+            const tag = (e.target as HTMLElement).tagName;
+            if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+            if (e.key === "ArrowUp" || (e.key === "p" && (e.metaKey || e.ctrlKey))) {
+                e.preventDefault();
+                goToPrevMatch();
+            } else if (e.key === "ArrowDown" || (e.key === "n" && (e.metaKey || e.ctrlKey))) {
+                e.preventDefault();
+                goToNextMatch();
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [totalMatches, goToPrevMatch, goToNextMatch]);
+
     return (
         <div className="flex flex-col h-full bg-swarm-surface overflow-hidden select-text">
-            {/* Header bar - compact like AgentHub */}
+            {/* Header bar */}
             <div className="shrink-0 border-b border-swarm-border">
                 {/* Session ID + actions row */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-swarm-bg">
@@ -175,6 +298,31 @@ export function SessionDetail({
                 )}
             </div>
 
+            {/* Match navigation bar */}
+            {totalMatches > 0 && (
+                <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-amber-400/10 border-b border-amber-400/20">
+                    <span className="text-[11px] text-amber-300 font-medium">
+                        {currentMatchIdx >= 0 ? currentMatchIdx + 1 : "–"} / {totalMatches} matches
+                    </span>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={goToPrevMatch}
+                            className="px-1.5 py-0.5 text-[11px] text-amber-300 border border-amber-400/30 rounded hover:bg-amber-400/20 transition-colors"
+                            title="Previous match (↑)"
+                        >
+                            ↑
+                        </button>
+                        <button
+                            onClick={goToNextMatch}
+                            className="px-1.5 py-0.5 text-[11px] text-amber-300 border border-amber-400/30 rounded hover:bg-amber-400/20 transition-colors"
+                            title="Next match (↓)"
+                        >
+                            ↓
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Conversation area - scrollable */}
             <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto">
                 {/* Toggle for tool calls */}
@@ -205,7 +353,13 @@ export function SessionDetail({
                 ) : (
                     <div className="space-y-0">
                         {displayMessages.map((msg, i) => (
-                            <MessageBubble key={i} message={msg} />
+                            <MessageBubble
+                                key={i}
+                                msgIndex={i}
+                                message={msg}
+                                getHighlightRanges={getHighlightRanges}
+                                isFocusedMatch={matchingMsgIndices[currentMatchIdx] === i}
+                            />
                         ))}
                     </div>
                 )}
@@ -219,7 +373,7 @@ export function SessionDetail({
                 />
             )}
 
-            {/* Steering input (replaces Open Terminal) */}
+            {/* Steering input */}
             <SteeringInput
                 sessionId={detail.id}
                 cwd={cwd}
@@ -239,16 +393,33 @@ export function SessionDetail({
     );
 }
 
-function MessageBubble({ message }: { message: ConversationMessage }) {
+function MessageBubble({ msgIndex, message, getHighlightRanges, isFocusedMatch }: {
+    msgIndex: number;
+    message: ConversationMessage;
+    getHighlightRanges: ((text: string) => { start: number; end: number }[]) | null;
+    isFocusedMatch: boolean;
+}) {
     const isUser = message.role === "user";
     const isThinking = message.content_type === "thinking";
     const isTool =
         message.content_type === "tool_use" ||
         message.content_type === "tool_result";
 
+    const renderText = (text: string, className?: string) => {
+        if (getHighlightRanges) {
+            const ranges = getHighlightRanges(text);
+            if (ranges.length > 0) {
+                return <HighlightText text={text} ranges={ranges} className={className} />;
+            }
+        }
+        return <span className={className}>{text}</span>;
+    };
+
+    const focusClass = isFocusedMatch ? "bg-amber-400/5 border-l-2 border-amber-400/40" : "";
+
     if (isTool) {
         return (
-            <div className="px-3 py-1">
+            <div className={`px-3 py-1 transition-colors ${focusClass}`} data-msg-idx={msgIndex}>
                 <div className="flex items-center gap-1.5 text-[10px]">
                     {message.content_type === "tool_use" ? (
                         <>
@@ -256,15 +427,16 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
                                 {message.tool_name}
                             </span>
                             <span className="text-swarm-text-dim">
-                                {message.text.slice(0, 80)}
-                                {message.text.length > 80 ? "..." : ""}
+                                {renderText(
+                                    message.text.slice(0, 80) + (message.text.length > 80 ? "..." : "")
+                                )}
                             </span>
                         </>
                     ) : (
                         <>
                             <span className="text-green-400/70">result</span>
                             <span className="text-swarm-text-dim font-mono truncate">
-                                {message.text.slice(0, 100)}
+                                {renderText(message.text.slice(0, 100))}
                             </span>
                         </>
                     )}
@@ -275,19 +447,19 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     if (isThinking) {
         return (
-            <div className="px-3 py-1.5 border-l-2 border-blue-500/30 ml-3 my-1">
+            <div className={`px-3 py-1.5 border-l-2 ${isFocusedMatch ? "border-amber-400/40" : "border-blue-500/30"} ml-3 my-1 transition-colors ${isFocusedMatch ? "bg-amber-400/5" : ""}`} data-msg-idx={msgIndex}>
                 <div className="text-[10px] text-blue-400/60 mb-0.5 italic">
                     thinking
                 </div>
                 <div className="text-xs text-swarm-text-dim/70 italic whitespace-pre-wrap">
-                    {message.text}
+                    {renderText(message.text)}
                 </div>
             </div>
         );
     }
 
     return (
-        <div className={`px-3 py-2 ${isUser ? "bg-swarm-bg/50" : ""}`}>
+        <div className={`px-3 py-2 transition-colors ${isUser ? "bg-swarm-bg/50" : ""} ${focusClass}`} data-msg-idx={msgIndex}>
             <div className="flex items-center gap-1.5 mb-1">
                 <span
                     className={`w-1.5 h-1.5 rounded-full ${isUser ? "bg-blue-400" : "bg-swarm-accent"}`}
@@ -297,7 +469,7 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
                 </span>
             </div>
             <div className="text-xs text-swarm-text whitespace-pre-wrap pl-3 leading-relaxed">
-                {message.text}
+                {renderText(message.text)}
             </div>
         </div>
     );

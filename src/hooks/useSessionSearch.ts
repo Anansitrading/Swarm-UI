@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import MiniSearch from "minisearch";
 import { invoke } from "@tauri-apps/api/core";
 import type { SessionInfo } from "../types/session";
+import { useSessionStore } from "../stores/sessionStore";
 
 interface SearchableSession {
     id: string;
@@ -23,8 +24,20 @@ export interface SearchResult {
 export function useSessionSearch(sessions: SessionInfo[]) {
     const miniSearchRef = useRef<MiniSearch<SearchableSession> | null>(null);
     const [query, setQuery] = useState("");
-    const [indexedPaths, setIndexedPaths] = useState<Set<string>>(new Set());
+    // Tracks sessions whose metadata has been indexed
+    const metaIndexedRef = useRef<Set<string>>(new Set());
+    // Tracks sessions whose conversation text has been fetched and indexed
+    const contentIndexedRef = useRef<Set<string>>(new Set());
     const [isIndexing, setIsIndexing] = useState(false);
+    // Trigger re-render after content indexing batches complete
+    const [contentIndexVersion, setContentIndexVersion] = useState(0);
+
+    const setStoreQuery = useSessionStore(s => s.setSearchQuery);
+
+    // Sync query to store so SessionDetail can read it
+    useEffect(() => {
+        setStoreQuery(query);
+    }, [query, setStoreQuery]);
 
     // Create MiniSearch instance once
     if (!miniSearchRef.current) {
@@ -32,10 +45,10 @@ export function useSessionSearch(sessions: SessionInfo[]) {
             fields: ["projectName", "projectPath", "branch", "model", "sessionId", "conversationText"],
             storeFields: ["sessionId"],
             searchOptions: {
-                boost: { projectName: 3, branch: 2, sessionId: 1.5, conversationText: 1 },
+                boost: { conversationText: 2, projectName: 3, branch: 2, sessionId: 1.5 },
                 prefix: true,
                 fuzzy: 0.2,
-                combineWith: "AND",
+                combineWith: "OR",
             },
         });
     }
@@ -46,7 +59,7 @@ export function useSessionSearch(sessions: SessionInfo[]) {
         const newSessions: SearchableSession[] = [];
 
         for (const s of sessions) {
-            if (!indexedPaths.has(s.jsonl_path)) {
+            if (!metaIndexedRef.current.has(s.jsonl_path)) {
                 newSessions.push({
                     id: s.jsonl_path, // MiniSearch needs unique `id`
                     jsonlPath: s.jsonl_path,
@@ -57,69 +70,67 @@ export function useSessionSearch(sessions: SessionInfo[]) {
                     sessionId: s.id,
                     conversationText: "", // Filled lazily
                 });
+                metaIndexedRef.current.add(s.jsonl_path);
             }
         }
 
         if (newSessions.length > 0) {
             ms.addAll(newSessions);
-            setIndexedPaths(prev => {
-                const next = new Set(prev);
-                for (const s of newSessions) next.add(s.jsonlPath);
-                return next;
-            });
         }
-    }, [sessions, indexedPaths]);
+    }, [sessions]);
 
-    // Lazily fetch and index conversation text in background
+    // Lazily fetch and index conversation text in background batches
     useEffect(() => {
         if (isIndexing) return;
         const ms = miniSearchRef.current!;
 
-        // Find sessions that need conversation text indexed
-        const unindexedPaths = sessions
-            .filter(s => indexedPaths.has(s.jsonl_path))
+        // Find sessions that have metadata indexed but NOT conversation text yet
+        const needsContent = sessions
+            .filter(s => metaIndexedRef.current.has(s.jsonl_path) && !contentIndexedRef.current.has(s.jsonl_path))
             .map(s => s.jsonl_path);
 
-        if (unindexedPaths.length === 0) return;
+        if (needsContent.length === 0) return;
 
-        // Index in batches of 20
-        const batch = unindexedPaths.slice(0, 20);
+        // Process in batches of 20
+        const batch = needsContent.slice(0, 20);
         setIsIndexing(true);
 
         invoke<[string, string][]>("get_sessions_search_text", { jsonlPaths: batch })
             .then(results => {
                 for (const [jsonlPath, text] of results) {
+                    // Mark as content-indexed regardless of whether text was empty
+                    contentIndexedRef.current.add(jsonlPath);
+
                     if (text) {
                         // Remove old doc and re-add with conversation text
                         try {
-                            const existing = ms.getStoredFields(jsonlPath);
-                            if (existing) {
-                                ms.discard(jsonlPath);
-                                const session = sessions.find(s => s.jsonl_path === jsonlPath);
-                                if (session) {
-                                    ms.add({
-                                        id: jsonlPath,
-                                        jsonlPath,
-                                        projectName: session.project_path.split("/").pop() || "",
-                                        projectPath: session.project_path,
-                                        branch: session.git_branch || "",
-                                        model: session.model || "",
-                                        sessionId: session.id,
-                                        conversationText: text,
-                                    });
-                                }
-                            }
+                            ms.discard(jsonlPath);
                         } catch {
-                            // Ignore errors during re-indexing
+                            // May fail if already discarded, that's fine
+                        }
+                        const session = sessions.find(s => s.jsonl_path === jsonlPath);
+                        if (session) {
+                            ms.add({
+                                id: jsonlPath,
+                                jsonlPath,
+                                projectName: session.project_path.split("/").pop() || "",
+                                projectPath: session.project_path,
+                                branch: session.git_branch || "",
+                                model: session.model || "",
+                                sessionId: session.id,
+                                conversationText: text,
+                            });
                         }
                     }
                 }
+                // Bump version to trigger search re-evaluation and next batch
+                setContentIndexVersion(v => v + 1);
             })
             .catch(e => console.error("Search indexing failed:", e))
             .finally(() => setIsIndexing(false));
-    }, [sessions, indexedPaths, isIndexing]);
+    }, [sessions, isIndexing, contentIndexVersion]);
 
-    // Perform search
+    // Perform search (re-evaluate when content index updates)
     const results = useMemo((): SearchResult[] | null => {
         if (!query.trim()) return null;
         const ms = miniSearchRef.current!;
@@ -132,7 +143,7 @@ export function useSessionSearch(sessions: SessionInfo[]) {
         } catch {
             return null;
         }
-    }, [query]);
+    }, [query, contentIndexVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Get matched session IDs set for fast lookup
     const matchedSessionIds = useMemo(() => {
