@@ -121,7 +121,7 @@ export function SessionDetail({
                                 Diff
                             </button>
                         )}
-                        {onResumeSession && (detail.status.type === "idle" || detail.status.type === "stopped") && (
+                        {onResumeSession && detail.status.type !== "thinking" && detail.status.type !== "executing_tool" && (
                             <button
                                 onClick={() => onResumeSession(detail.id, cwd)}
                                 className="px-2 py-0.5 text-[10px] text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/10 transition-colors"
