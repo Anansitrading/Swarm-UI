@@ -35,6 +35,17 @@ export function SessionDetail({
     const [showTools, setShowTools] = useState(false);
     const [showSmithPanel, setShowSmithPanel] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const isUserNearBottomRef = useRef(true);
+    const isScrollingProgrammaticallyRef = useRef(false);
+
+    const handleScroll = useCallback(() => {
+        if (isScrollingProgrammaticallyRef.current) return;
+        const el = scrollRef.current;
+        if (!el) return;
+        // User is "near bottom" if within 80px of the bottom
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        isUserNearBottomRef.current = distanceFromBottom < 80;
+    }, []);
 
     const refresh = useCallback(async () => {
         try {
@@ -75,10 +86,15 @@ export function SessionDetail({
         setDetail(session);
     }, [session]);
 
-    // Auto-scroll to bottom when new messages arrive
+    // Auto-scroll to bottom only when user is already near the bottom
     useEffect(() => {
-        if (scrollRef.current) {
+        if (scrollRef.current && isUserNearBottomRef.current) {
+            isScrollingProgrammaticallyRef.current = true;
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            // Reset flag after the scroll event fires
+            requestAnimationFrame(() => {
+                isScrollingProgrammaticallyRef.current = false;
+            });
         }
     }, [messages]);
 
@@ -160,7 +176,7 @@ export function SessionDetail({
             </div>
 
             {/* Conversation area - scrollable */}
-            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+            <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto">
                 {/* Toggle for tool calls */}
                 <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1 bg-swarm-surface/95 backdrop-blur border-b border-swarm-border/50">
                     <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-swarm-text-dim">
