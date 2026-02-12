@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
 import { SessionCard } from "./SessionCard";
+import { useSessionSearch } from "../../hooks/useSessionSearch";
+import { HighlightText } from "./HighlightText";
 import type { SessionInfo } from "../../types/session";
 
 interface RepoGroup {
@@ -19,7 +21,7 @@ export function SessionList() {
         selectSession,
         startWatcher,
     } = useSessionStore();
-    const [search, setSearch] = useState("");
+    const { query: search, setQuery: setSearch, matchedSessionIds, isSearching, getHighlightRanges } = useSessionSearch(sessions);
     const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
     // Track repos the user has manually collapsed so auto-expand doesn't fight them
     const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(new Set());
@@ -62,23 +64,17 @@ export function SessionList() {
         return result;
     }, [sessions, expandedRepos]);
 
-    // Filter by search
+    // Filter by search - use MiniSearch results when searching, otherwise show all
     const filteredGroups = useMemo(() => {
-        if (!search.trim()) return repoGroups;
-        const q = search.toLowerCase();
+        if (!isSearching || !matchedSessionIds) return repoGroups;
         return repoGroups
             .map((g) => ({
                 ...g,
-                sessions: g.sessions.filter(
-                    (s) =>
-                        s.project_path.toLowerCase().includes(q) ||
-                        (s.git_branch &&
-                            s.git_branch.toLowerCase().includes(q)) ||
-                        s.id.toLowerCase().includes(q),
-                ),
+                sessions: g.sessions.filter((s) => matchedSessionIds.has(s.id)),
+                expanded: true, // Auto-expand all groups when searching
             }))
             .filter((g) => g.sessions.length > 0);
-    }, [repoGroups, search]);
+    }, [repoGroups, isSearching, matchedSessionIds]);
 
     const toggleRepo = (path: string) => {
         setExpandedRepos((prev) => {
@@ -190,6 +186,7 @@ export function SessionList() {
                             selectedSessionId={selectedSessionId}
                             onToggle={() => toggleRepo(group.path)}
                             onSelectSession={selectSession}
+                            getHighlightRanges={isSearching ? getHighlightRanges : undefined}
                         />
                     ))
                 )}
@@ -203,11 +200,13 @@ function RepoSection({
     selectedSessionId,
     onToggle,
     onSelectSession,
+    getHighlightRanges,
 }: {
     group: RepoGroup;
     selectedSessionId: string | null;
     onToggle: () => void;
     onSelectSession: (id: string | null) => void;
+    getHighlightRanges?: (text: string) => { start: number; end: number }[];
 }) {
     const activeCount = group.sessions.filter(
         (s) =>
@@ -244,7 +243,11 @@ function RepoSection({
                     />
                 </svg>
                 <span className="text-xs font-medium text-swarm-text truncate flex-1 text-left">
-                    {group.name}
+                    {getHighlightRanges ? (
+                        <HighlightText text={group.name} ranges={getHighlightRanges(group.name)} />
+                    ) : (
+                        group.name
+                    )}
                 </span>
                 <span className="text-[10px] text-swarm-text-dim tabular-nums">
                     {group.sessions.length}
@@ -263,6 +266,7 @@ function RepoSection({
                             session={session}
                             selected={selectedSessionId === session.id}
                             onClick={() => onSelectSession(session.id)}
+                            getHighlightRanges={getHighlightRanges}
                         />
                     ))}
                 </div>

@@ -105,6 +105,20 @@ pub async fn get_conversation(jsonl_path: String) -> Result<Vec<ConversationMess
     crate::parsers::jsonl_parser::extract_conversation(&jsonl_path)
 }
 
+/// Get search text for multiple sessions (for indexing).
+/// Returns a map of jsonl_path -> search_text.
+#[tauri::command]
+pub async fn get_sessions_search_text(
+    jsonl_paths: Vec<String>,
+) -> Result<Vec<(String, String)>, AppError> {
+    let mut results = Vec::new();
+    for path in jsonl_paths {
+        let text = crate::parsers::jsonl_parser::extract_search_text(&path).unwrap_or_default();
+        results.push((path, text));
+    }
+    Ok(results)
+}
+
 /// Inject a steering message into a Claude Code session by resuming it in a PTY.
 /// For idle/waiting sessions, spawns `claude --resume <id>` and sends the message.
 /// Returns PtyInfo so the frontend can track the resumed session output.

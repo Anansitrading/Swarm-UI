@@ -1,12 +1,14 @@
 import type { SessionInfo } from "../../types/session";
+import { HighlightText } from "./HighlightText";
 
 interface SessionCardProps {
     session: SessionInfo;
     selected: boolean;
     onClick: () => void;
+    getHighlightRanges?: (text: string) => { start: number; end: number }[];
 }
 
-export function SessionCard({ session, selected, onClick }: SessionCardProps) {
+export function SessionCard({ session, selected, onClick, getHighlightRanges }: SessionCardProps) {
     const timeAgo = formatTimeAgo(session.last_modified);
     const isActive =
         session.status.type === "thinking" ||
@@ -33,7 +35,14 @@ export function SessionCard({ session, selected, onClick }: SessionCardProps) {
                     <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.5 2.5 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z" />
                 </svg>
                 <span className="text-xs text-swarm-text truncate">
-                    {session.git_branch || session.id.slice(0, 8)}
+                    {getHighlightRanges ? (
+                        <HighlightText
+                            text={session.git_branch || session.id.slice(0, 8)}
+                            ranges={getHighlightRanges(session.git_branch || session.id.slice(0, 8))}
+                        />
+                    ) : (
+                        session.git_branch || session.id.slice(0, 8)
+                    )}
                 </span>
 
                 {/* Session count / message count badges */}
@@ -52,7 +61,11 @@ export function SessionCard({ session, selected, onClick }: SessionCardProps) {
             {/* Session ID for traceability */}
             <div className="mt-0.5 pl-5">
                 <span className="text-[9px] font-mono text-swarm-text-dim/60 select-all">
-                    {session.id}
+                    {getHighlightRanges ? (
+                        <HighlightText text={session.id} ranges={getHighlightRanges(session.id)} />
+                    ) : (
+                        session.id
+                    )}
                 </span>
             </div>
 

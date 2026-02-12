@@ -435,6 +435,72 @@ pub fn extract_conversation(path: &str) -> Result<Vec<ConversationMessage>, AppE
     Ok(messages)
 }
 
+/// Extract a compact text blob from a session for search indexing.
+/// Returns user messages + assistant text blocks, truncated to ~4KB total.
+pub fn extract_search_text(path: &str) -> Result<String, AppError> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut parts: Vec<String> = Vec::new();
+    let mut total_len = 0usize;
+    const MAX_TOTAL: usize = 4096;
+
+    for line in reader.lines() {
+        if total_len >= MAX_TOTAL {
+            break;
+        }
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: JsonlEntry = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let entry_type = entry.entry_type.as_deref().unwrap_or("");
+        if entry_type != "user" && entry_type != "assistant" {
+            continue;
+        }
+        if let Some(msg) = &entry.message {
+            if let Some(content) = &msg.content {
+                if let Some(arr) = content.as_array() {
+                    for block in arr {
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if block_type == "text" {
+                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                let remaining = MAX_TOTAL.saturating_sub(total_len);
+                                if remaining == 0 { break; }
+                                let chunk = if text.len() > remaining {
+                                    &text[..text.char_indices()
+                                        .take_while(|(i, _)| *i <= remaining)
+                                        .last()
+                                        .map(|(i, c)| i + c.len_utf8())
+                                        .unwrap_or(remaining)]
+                                } else {
+                                    text
+                                };
+                                total_len += chunk.len();
+                                parts.push(chunk.to_string());
+                            }
+                        }
+                    }
+                } else if let Some(text) = content.as_str() {
+                    let remaining = MAX_TOTAL.saturating_sub(total_len);
+                    if remaining > 0 {
+                        let chunk = if text.len() > remaining { &text[..remaining] } else { text };
+                        total_len += chunk.len();
+                        parts.push(chunk.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(parts.join(" "))
+}
+
 /// Incremental reader that tracks file offset for live watching
 pub struct IncrementalReader {
     path: String,

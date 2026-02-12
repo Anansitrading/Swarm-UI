@@ -32,6 +32,7 @@ pub fn run() {
             commands::session::get_session_detail,
             commands::session::get_conversation,
             commands::session::inject_session_message,
+            commands::session::get_sessions_search_text,
             // Process commands
             commands::process::find_claude_processes,
             commands::process::kill_process,
