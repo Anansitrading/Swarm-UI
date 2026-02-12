@@ -268,6 +268,75 @@ pub struct FileDiffContent {
     pub new_content: String,
 }
 
+/// Get files changed in a specific commit
+#[tauri::command]
+pub async fn get_commit_files(
+    repo_path: String,
+    commit_hash: String,
+) -> Result<Vec<GitFileChange>, AppError> {
+    let output = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "-r", "--name-status", &commit_hash])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| AppError::Internal(format!("git diff-tree failed: {e}")))?;
+
+    let mut changes = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() == 2 {
+            changes.push(GitFileChange {
+                path: parts[1].to_string(),
+                status: parse_git_status(parts[0]),
+                staged: false,
+            });
+        }
+    }
+    Ok(changes)
+}
+
+/// Get the diff content for a file in a specific commit (parent..commit)
+#[tauri::command]
+pub async fn get_commit_file_diff(
+    repo_path: String,
+    commit_hash: String,
+    file_path: String,
+) -> Result<FileDiffContent, AppError> {
+    // Get old content (parent commit)
+    let old_content = Command::new("git")
+        .args(["show", &format!("{}~1:{}", commit_hash, file_path)])
+        .current_dir(&repo_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    // Get new content (the commit)
+    let new_content = Command::new("git")
+        .args(["show", &format!("{}:{}", commit_hash, file_path)])
+        .current_dir(&repo_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    // Get the actual diff
+    let diff = Command::new("git")
+        .args(["diff", &format!("{}~1", commit_hash), &commit_hash, "--", &file_path])
+        .current_dir(&repo_path)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    Ok(FileDiffContent {
+        diff,
+        old_content,
+        new_content,
+    })
+}
+
 fn parse_git_status(s: &str) -> String {
     match s.chars().next() {
         Some('M') => "modified".to_string(),

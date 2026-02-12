@@ -61,6 +61,8 @@ pub fn run() {
             commands::git::get_git_diff,
             commands::git::get_git_log,
             commands::git::get_file_diff,
+            commands::git::get_commit_files,
+            commands::git::get_commit_file_diff,
             // Filesystem commands
             commands::filesystem::read_file,
             commands::filesystem::read_file_range,

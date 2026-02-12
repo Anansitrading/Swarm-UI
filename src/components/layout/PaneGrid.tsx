@@ -210,6 +210,32 @@ export function PaneGrid() {
         [diffState],
     );
 
+    const handleSelectCommitFile = useCallback(
+        async (commitHash: string, filePath: string) => {
+            if (!diffState) return;
+            try {
+                const content = await invoke<FileDiffContent>("get_commit_file_diff", {
+                    repoPath: diffState.repoPath,
+                    commitHash,
+                    filePath,
+                });
+                setDiffState((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              selectedFile: `${commitHash}:${filePath}`,
+                              oldContent: content.old_content,
+                              newContent: content.new_content,
+                          }
+                        : null,
+                );
+            } catch (e) {
+                console.error("Failed to get commit file diff:", e);
+            }
+        },
+        [diffState],
+    );
+
     if (mode === "sprite_grid") {
         return (
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -227,7 +253,9 @@ export function PaneGrid() {
                         changes={diffState.changes}
                         commits={diffState.commits}
                         selectedFile={diffState.selectedFile}
+                        repoPath={diffState.repoPath}
                         onSelectFile={handleSelectDiffFile}
+                        onSelectCommitFile={handleSelectCommitFile}
                         onClose={() => setDiffState(null)}
                     />
                     <div className="flex-1 min-h-0 overflow-hidden">
@@ -235,7 +263,7 @@ export function PaneGrid() {
                             <DiffViewer
                                 oldContent={diffState.oldContent}
                                 newContent={diffState.newContent}
-                                fileName={diffState.selectedFile}
+                                fileName={diffState.selectedFile.includes(":") ? diffState.selectedFile.split(":").slice(1).join(":") : diffState.selectedFile}
                             />
                         ) : (
                             <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
@@ -293,7 +321,9 @@ export function PaneGrid() {
                         changes={diffState.changes}
                         commits={diffState.commits}
                         selectedFile={diffState.selectedFile}
+                        repoPath={diffState.repoPath}
                         onSelectFile={handleSelectDiffFile}
+                        onSelectCommitFile={handleSelectCommitFile}
                         onClose={() => setDiffState(null)}
                     />
                     <div className="flex-1 min-h-0 overflow-hidden">
@@ -301,7 +331,7 @@ export function PaneGrid() {
                             <DiffViewer
                                 oldContent={diffState.oldContent}
                                 newContent={diffState.newContent}
-                                fileName={diffState.selectedFile}
+                                fileName={diffState.selectedFile.includes(":") ? diffState.selectedFile.split(":").slice(1).join(":") : diffState.selectedFile}
                             />
                         ) : (
                             <div className="flex items-center justify-center h-full text-swarm-text-dim text-sm">
@@ -321,6 +351,7 @@ export function PaneGrid() {
                         <SessionDetail
                             session={selectedSession}
                             onOpenTerminal={handleOpenTerminal}
+                            onResumeSession={handleResumeSession}
                             onKillProcess={handleKillProcess}
                             onShowDiff={handleShowDiff}
                             onBack={handleBack}
@@ -624,23 +655,47 @@ function DiffSidebar({
     changes,
     commits,
     selectedFile,
+    repoPath,
     onSelectFile,
+    onSelectCommitFile,
     onClose,
 }: {
     changes: GitFileChange[];
     commits: GitCommit[];
     selectedFile: string | null;
+    repoPath: string;
     onSelectFile: (path: string, staged: boolean) => void;
+    onSelectCommitFile: (commitHash: string, filePath: string) => void;
     onClose: () => void;
 }) {
     const trackedChanges = changes.filter((c) => c.status !== "untracked");
     const untrackedFiles = changes.filter((c) => c.status === "untracked");
+    const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
+    const [commitFiles, setCommitFiles] = useState<GitFileChange[]>([]);
+
+    const handleExpandCommit = useCallback(async (hash: string) => {
+        if (expandedCommit === hash) {
+            setExpandedCommit(null);
+            setCommitFiles([]);
+            return;
+        }
+        try {
+            const files = await invoke<GitFileChange[]>("get_commit_files", {
+                repoPath,
+                commitHash: hash,
+            });
+            setCommitFiles(files);
+            setExpandedCommit(hash);
+        } catch (e) {
+            console.error("Failed to get commit files:", e);
+        }
+    }, [expandedCommit, repoPath]);
 
     return (
         <div className="w-64 flex flex-col bg-swarm-surface border-r border-swarm-border overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-swarm-border">
                 <span className="text-xs font-medium text-swarm-text">
-                    Git Status
+                    Git Changes
                 </span>
                 <button
                     onClick={onClose}
@@ -650,22 +705,18 @@ function DiffSidebar({
                 </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-                {/* Changed files section */}
+                {/* Working tree changes */}
                 {trackedChanges.length > 0 && (
                     <div>
                         <div className="px-3 py-1.5 text-[10px] font-medium text-swarm-accent uppercase tracking-wider bg-swarm-bg/50">
-                            Changes ({trackedChanges.length})
+                            Working Tree ({trackedChanges.length})
                         </div>
                         {trackedChanges.map((change) => (
                             <button
                                 key={`${change.path}-${change.staged}`}
-                                onClick={() =>
-                                    onSelectFile(change.path, change.staged)
-                                }
+                                onClick={() => onSelectFile(change.path, change.staged)}
                                 className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-swarm-accent/5 transition-colors ${
-                                    selectedFile === change.path
-                                        ? "bg-swarm-accent/10"
-                                        : ""
+                                    selectedFile === change.path ? "bg-swarm-accent/10" : ""
                                 }`}
                             >
                                 <StatusIcon status={change.status} />
@@ -673,16 +724,14 @@ function DiffSidebar({
                                     {change.path.split("/").pop()}
                                 </span>
                                 {change.staged && (
-                                    <span className="text-[9px] text-green-400 shrink-0">
-                                        staged
-                                    </span>
+                                    <span className="text-[9px] text-green-400 shrink-0">staged</span>
                                 )}
                             </button>
                         ))}
                     </div>
                 )}
 
-                {/* Untracked files section */}
+                {/* Untracked files */}
                 {untrackedFiles.length > 0 && (
                     <div>
                         <div className="px-3 py-1.5 text-[10px] font-medium text-yellow-400 uppercase tracking-wider bg-swarm-bg/50">
@@ -693,14 +742,10 @@ function DiffSidebar({
                                 key={file.path}
                                 onClick={() => onSelectFile(file.path, false)}
                                 className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-swarm-accent/5 transition-colors ${
-                                    selectedFile === file.path
-                                        ? "bg-swarm-accent/10"
-                                        : ""
+                                    selectedFile === file.path ? "bg-swarm-accent/10" : ""
                                 }`}
                             >
-                                <span className="text-[10px] font-mono font-bold text-cyan-400">
-                                    ?
-                                </span>
+                                <span className="text-[10px] font-mono font-bold text-cyan-400">?</span>
                                 <span className="truncate text-swarm-text">
                                     {file.path.split("/").pop()}
                                 </span>
@@ -709,40 +754,69 @@ function DiffSidebar({
                     </div>
                 )}
 
-                {/* Recent commits section */}
+                {/* Commits - clickable to expand and show files */}
                 {commits.length > 0 && (
                     <div>
                         <div className="px-3 py-1.5 text-[10px] font-medium text-blue-400 uppercase tracking-wider bg-swarm-bg/50">
-                            Recent Commits ({commits.length})
+                            Commits ({commits.length})
                         </div>
                         {commits.map((commit) => (
-                            <div
-                                key={commit.hash}
-                                className="px-3 py-1.5 text-xs border-b border-swarm-border/30"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <span className="font-mono text-swarm-accent text-[10px] shrink-0">
-                                        {commit.short_hash}
-                                    </span>
-                                    <span className="truncate text-swarm-text">
-                                        {commit.subject}
-                                    </span>
-                                </div>
-                                <div className="text-[10px] text-swarm-text-dim mt-0.5">
-                                    {commit.author} &middot; {commit.time_ago}
-                                </div>
+                            <div key={commit.hash}>
+                                <button
+                                    onClick={() => handleExpandCommit(commit.hash)}
+                                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-swarm-border/30 hover:bg-swarm-accent/5 transition-colors ${
+                                        expandedCommit === commit.hash ? "bg-swarm-accent/10" : ""
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <svg
+                                            className={`w-2.5 h-2.5 text-swarm-text-dim transition-transform shrink-0 ${
+                                                expandedCommit === commit.hash ? "rotate-90" : ""
+                                            }`}
+                                            fill="currentColor"
+                                            viewBox="0 0 20 20"
+                                        >
+                                            <path d="M6 6L14 10L6 14V6Z" />
+                                        </svg>
+                                        <span className="font-mono text-swarm-accent text-[10px] shrink-0">
+                                            {commit.short_hash}
+                                        </span>
+                                        <span className="truncate text-swarm-text">
+                                            {commit.subject}
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] text-swarm-text-dim mt-0.5 pl-4">
+                                        {commit.author} &middot; {commit.time_ago}
+                                    </div>
+                                </button>
+                                {expandedCommit === commit.hash && commitFiles.length > 0 && (
+                                    <div className="bg-swarm-bg/30">
+                                        {commitFiles.map((file) => (
+                                            <button
+                                                key={file.path}
+                                                onClick={() => onSelectCommitFile(commit.hash, file.path)}
+                                                className={`w-full text-left pl-8 pr-3 py-1 text-xs flex items-center gap-2 hover:bg-swarm-accent/5 transition-colors ${
+                                                    selectedFile === `${commit.hash}:${file.path}` ? "bg-swarm-accent/10" : ""
+                                                }`}
+                                            >
+                                                <StatusIcon status={file.status} />
+                                                <span className="truncate text-swarm-text">
+                                                    {file.path.split("/").pop()}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
                 )}
 
-                {trackedChanges.length === 0 &&
-                    untrackedFiles.length === 0 &&
-                    commits.length === 0 && (
-                        <div className="p-3 text-xs text-swarm-text-dim">
-                            No changes or commits
-                        </div>
-                    )}
+                {trackedChanges.length === 0 && untrackedFiles.length === 0 && commits.length === 0 && (
+                    <div className="p-3 text-xs text-swarm-text-dim">
+                        No changes or commits
+                    </div>
+                )}
             </div>
         </div>
     );
