@@ -1,6 +1,7 @@
 mod commands;
 mod error;
 mod parsers;
+mod search;
 mod sprite;
 mod sprites_api;
 mod sprites_ws;
