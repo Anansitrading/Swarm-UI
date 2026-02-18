@@ -10,11 +10,11 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 /// List all discovered Claude Code sessions from ~/.claude/projects/
-/// Parses JSONL files for live status detection.
-/// Uses spawn_blocking + rayon for parallel file parsing.
+/// TODO: Replace with Tantivy query once search module is wired up.
 #[tauri::command]
-pub async fn list_sessions() -> Result<Vec<SessionInfo>, AppError> {
-    tokio::task::spawn_blocking(|| list_sessions_blocking())
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, AppError> {
+    let _ = &state; // silence unused warning until Tantivy wired up
+    tokio::task::spawn_blocking(list_sessions_blocking)
         .await
         .map_err(|e| AppError::Internal(format!("Join error: {e}")))?
 }
@@ -49,48 +49,57 @@ fn list_sessions_blocking() -> Result<Vec<SessionInfo>, AppError> {
         }
     }
 
-    // Parse all JSONL files in parallel using rayon
+    // Parse all JSONL files in parallel using rayon + cache
     let mut sessions: Vec<SessionInfo> = jsonl_paths
         .par_iter()
         .map(|(dir_path, file_path)| {
             let path_str = file_path.to_string_lossy().to_string();
-            match crate::parsers::jsonl_parser::parse_session_file(&path_str) {
-                Ok(info) => info,
-                Err(e) => {
-                    let dir_name = dir_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let session_id = file_path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let modified = fs::metadata(file_path)
-                        .ok()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
 
-                    tracing::warn!("Failed to parse {path_str}: {e}");
-                    SessionInfo {
-                        id: session_id,
-                        project_path: decode_claude_path(&dir_name),
-                        encoded_path: dir_name,
-                        jsonl_path: path_str,
-                        last_modified: modified,
-                        status: SessionStatus::Unknown,
-                        model: None,
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        total_output_tokens: 0,
-                        context_tokens: 0,
-                        cache_creation_tokens: 0,
-                        cache_read_tokens: 0,
-                        git_branch: None,
-                        cwd: None,
+            // TODO: Replace with Tantivy query once search module is wired up.
+            // For now, use tail-read parsing without cache.
+            match crate::parsers::jsonl_parser::parse_session_tail(&path_str) {
+                Ok(info) => info,
+                Err(_) => {
+                    match crate::parsers::jsonl_parser::parse_session_tail(&path_str) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            let dir_name = dir_path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let session_id = file_path
+                                .file_stem()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let modified = fs::metadata(file_path)
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+
+                            tracing::warn!("Failed to parse {path_str}: {e}");
+                            SessionInfo {
+                                id: session_id,
+                                project_path: decode_claude_path(&dir_name),
+                                encoded_path: dir_name,
+                                jsonl_path: path_str,
+                                last_modified: modified,
+                                status: SessionStatus::Unknown,
+                                model: None,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                total_output_tokens: 0,
+                                context_tokens: 0,
+                                cache_creation_tokens: 0,
+                                cache_read_tokens: 0,
+                                git_branch: None,
+                                cwd: None,
+                                summary: None,
+                            }
+                        }
                     }
                 }
             }

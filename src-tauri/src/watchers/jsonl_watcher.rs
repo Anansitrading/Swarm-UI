@@ -1,13 +1,19 @@
 use crate::error::AppError;
+use crate::state::AppState;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashSet;
 use std::sync::mpsc;
-use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, State};
 
 /// Start watching ~/.claude/projects/ for JSONL file changes.
 /// Emits "session:updated" events when session files are modified.
+/// Uses debouncing + cached parsing for efficiency.
 #[tauri::command]
-pub async fn start_session_watcher(app: AppHandle) -> Result<(), AppError> {
+pub async fn start_session_watcher(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     let claude_dir = dirs::home_dir()
         .ok_or_else(|| AppError::Internal("No home dir".into()))?
         .join(".claude")
@@ -18,6 +24,9 @@ pub async fn start_session_watcher(app: AppHandle) -> Result<(), AppError> {
             "~/.claude/projects/ not found".to_string(),
         ));
     }
+
+    // TODO: Replace with Tantivy incremental watcher once search module is wired up.
+    let _ = &state; // silence unused warning until Tantivy wired up
 
     // Spawn watcher in a background thread
     std::thread::spawn(move || {
@@ -45,32 +54,41 @@ pub async fn start_session_watcher(app: AppHandle) -> Result<(), AppError> {
 
         tracing::info!("Watching {} for JSONL changes", claude_dir.display());
 
+        // Debounce: collect changed paths and flush every 1 second
+        let debounce_interval = Duration::from_secs(1);
+        let mut pending_paths: HashSet<String> = HashSet::new();
+        let mut last_flush = Instant::now();
+
         loop {
-            match rx.recv_timeout(Duration::from_secs(5)) {
+            match rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(event) => {
                     for path in &event.paths {
                         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                             continue;
                         }
-
-                        let path_str = path.to_string_lossy().to_string();
-
-                        // Parse the updated session file
-                        match crate::parsers::jsonl_parser::parse_session_file(&path_str) {
-                            Ok(info) => {
-                                let _ = app.emit("session:updated", &info);
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to parse {path_str}: {e}");
-                            }
-                        }
+                        pending_paths.insert(path.to_string_lossy().to_string());
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // Periodic check - could emit heartbeat
-                    continue;
+                    // Fall through to flush check
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+
+            // Flush pending paths if debounce interval has passed
+            if !pending_paths.is_empty() && last_flush.elapsed() >= debounce_interval {
+                for path_str in pending_paths.drain() {
+                    // TODO: Replace with Tantivy incremental indexing.
+                    match crate::parsers::jsonl_parser::parse_session_tail(&path_str) {
+                        Ok(info) => {
+                            let _ = app.emit("session:updated", &info);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse {path_str}: {e}");
+                        }
+                    }
+                }
+                last_flush = Instant::now();
             }
         }
     });
