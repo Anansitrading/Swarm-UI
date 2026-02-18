@@ -6,26 +6,17 @@ use crate::search::types::{
     SessionFilter, SessionListItem,
 };
 use crate::search::watcher::{format_tantivy_date, session_doc_to_list_item};
+use crate::state::IndexHandle;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{BooleanQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{IndexRecordOption, Term};
-use tantivy::{Index, IndexReader, IndexWriter, Order, TantivyDocument};
-
-/// Central search state, injected as Tauri managed state.
-pub struct IndexHandle {
-    pub index: Index,
-    pub reader: IndexReader,
-    pub schema: IndexSchema,
-    pub writer: Arc<Mutex<IndexWriter>>,
-    pub paused: Arc<AtomicBool>,
-}
+use tantivy::{IndexReader, Order, TantivyDocument};
 
 // ---------------------------------------------------------------------------
 // Core query functions (synchronous, testable)
@@ -441,12 +432,9 @@ pub fn reindex_all_query(handle: &IndexHandle) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // Tauri command wrappers (async, delegates to spawn_blocking)
 // ---------------------------------------------------------------------------
-// Note: list_sessions, get_session_detail, get_conversation use tantivy_ prefix
-// to coexist with legacy commands in commands/session.rs during migration.
-// Once session.rs is gutted, rename these back and update lib.rs handler.
 
 #[tauri::command]
-pub async fn tantivy_list_sessions(
+pub async fn list_sessions(
     handle: tauri::State<'_, IndexHandle>,
     filter: Option<SessionFilter>,
 ) -> Result<Vec<SessionListItem>, String> {
@@ -473,7 +461,7 @@ pub async fn search_sessions(
 }
 
 #[tauri::command]
-pub async fn tantivy_get_session_detail(
+pub async fn get_session_detail(
     handle: tauri::State<'_, IndexHandle>,
     session_id: String,
 ) -> Result<SessionDetail, String> {
@@ -485,7 +473,7 @@ pub async fn tantivy_get_session_detail(
 }
 
 #[tauri::command]
-pub async fn tantivy_get_conversation(
+pub async fn get_conversation(
     handle: tauri::State<'_, IndexHandle>,
     session_id: String,
 ) -> Result<Vec<ConversationMessage>, String> {
@@ -770,7 +758,7 @@ fn dir_size_recursive(path: &Path) -> u64 {
 mod tests {
     use super::*;
     use crate::search::schema::IndexSchema;
-    use tantivy::Index;
+    use tantivy::{Index, IndexWriter};
 
     /// Create an in-memory index with the full schema.
     fn test_index() -> (Index, IndexSchema) {

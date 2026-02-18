@@ -61,13 +61,15 @@ impl IndexHandle {
     }
 }
 
-/// Shared application state wrapped in Mutex for thread safety
+/// Shared application state wrapped in Mutex for thread safety.
+///
+/// Note: `IndexHandle` is managed as a separate Tauri state (not inside AppState)
+/// since it is initialized asynchronously during setup and needs to be accessed
+/// independently by search commands.
 pub struct AppState {
     pub ptys: Mutex<HashMap<String, PtyInstance>>,
     pub sprites_client: Mutex<Option<SpritesClient>>,
     pub ws_state: WsState,
-    /// Tantivy search index handle. Initialized lazily on first use or app startup.
-    pub index_handle: Mutex<Option<IndexHandle>>,
 }
 
 impl AppState {
@@ -76,7 +78,6 @@ impl AppState {
             ptys: Mutex::new(HashMap::new()),
             sprites_client: Mutex::new(None),
             ws_state: WsState::new(),
-            index_handle: Mutex::new(None),
         }
     }
 
@@ -176,9 +177,9 @@ mod tests {
     }
 
     #[test]
-    fn test_app_state_new_has_no_index_handle() {
+    fn test_app_state_new_creates_empty_ptys() {
         let state = AppState::new();
-        let guard = state.index_handle.lock().unwrap();
-        assert!(guard.is_none());
+        let ptys = state.ptys.lock().unwrap();
+        assert!(ptys.is_empty());
     }
 }
