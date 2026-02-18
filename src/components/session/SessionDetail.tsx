@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, useCallback, useRef, useMemo, memo } from "react";
-import type { SessionInfo } from "../../types/session";
+import type { SessionListItem, ConversationMessage } from "../../types/session";
 import { useSessionStore } from "../../stores/sessionStore";
 import { HighlightText } from "./HighlightText";
 import { ContextBar } from "./ContextBar";
@@ -8,20 +8,12 @@ import { SteeringInput } from "./SteeringInput";
 import { SmithPanel } from "./SmithPanel";
 
 interface SessionDetailProps {
-    session: SessionInfo;
+    session: SessionListItem;
     onOpenTerminal?: (cwd: string, agentName?: string) => void;
     onResumeSession?: (sessionId: string, cwd: string) => void;
     onKillProcess?: (pid: number) => void;
     onShowDiff?: (repoPath: string) => void;
     onBack?: () => void;
-}
-
-interface ConversationMessage {
-    role: string;
-    content_type: string;
-    text: string;
-    tool_name: string | null;
-    timestamp: number | null;
 }
 
 export function SessionDetail({
@@ -33,7 +25,7 @@ export function SessionDetail({
 }: SessionDetailProps) {
     void _onOpenTerminal; // Available for future terminal launch from detail view
     const searchQuery = useSessionStore(s => s.searchQuery);
-    const [detail, setDetail] = useState<SessionInfo>(session);
+    const [detail, setDetail] = useState<SessionListItem>(session);
     const [messages, setMessages] = useState<ConversationMessage[]>([]);
     const [showTools, setShowTools] = useState(false);
     const [showSmithPanel, setShowSmithPanel] = useState(false);
@@ -54,28 +46,28 @@ export function SessionDetail({
 
     const refresh = useCallback(async () => {
         try {
-            const info = await invoke<SessionInfo>("get_session_detail", {
-                jsonlPath: session.jsonl_path,
+            const info = await invoke<SessionListItem>("get_session_detail", {
+                sessionId: session.session_id,
             });
             setDetail(info);
         } catch {
             // Keep current data on error
         }
-    }, [session.jsonl_path]);
+    }, [session.session_id]);
 
     const fetchConversation = useCallback(async () => {
         try {
             const msgs = await invoke<ConversationMessage[]>(
                 "get_conversation",
                 {
-                    jsonlPath: session.jsonl_path,
+                    sessionId: session.session_id,
                 },
             );
             setMessages(msgs);
         } catch {
             setMessages([]);
         }
-    }, [session.jsonl_path]);
+    }, [session.session_id]);
 
     useEffect(() => {
         hasAutoScrolledRef.current = false;
@@ -104,7 +96,7 @@ export function SessionDetail({
         }
     }, [messages, searchQuery]);
 
-    const cwd = detail.cwd || detail.project_path;
+    const cwd = detail.project_path;
 
     // Compute highlight ranges for search query matches
     const searchTerms = useMemo(() => {
@@ -254,8 +246,8 @@ export function SessionDetail({
                             </button>
                         )}
                         <StatusDot status={detail.status} />
-                        <span className="text-[10px] font-mono text-swarm-text-dim truncate select-all" title={detail.id}>
-                            {detail.id}
+                        <span className="text-[10px] font-mono text-swarm-text-dim truncate select-all" title={detail.session_id}>
+                            {detail.session_id}
                         </span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -267,11 +259,11 @@ export function SessionDetail({
                                 Diff
                             </button>
                         )}
-                        {onResumeSession && detail.status.type !== "thinking" && detail.status.type !== "executing_tool" && (
+                        {onResumeSession && detail.status !== "thinking" && detail.status !== "executing_tool" && (
                             <button
-                                onClick={() => onResumeSession(detail.id, cwd)}
+                                onClick={() => onResumeSession(detail.session_id, cwd)}
                                 className="px-2 py-0.5 text-[10px] text-swarm-accent border border-swarm-accent/30 rounded hover:bg-swarm-accent/10 transition-colors"
-                                title={`Resume session ${detail.id}`}
+                                title={`Resume session ${detail.session_id}`}
                             >
                                 Resume
                             </button>
@@ -292,13 +284,11 @@ export function SessionDetail({
                 </div>
 
                 {/* Context bar */}
-                {(detail.context_tokens > 0 || detail.input_tokens > 0) && (
+                {detail.total_tokens > 0 && (
                     <div className="px-3 pb-1.5">
                         <ContextBar
-                            contextTokens={detail.context_tokens}
-                            inputTokens={detail.input_tokens}
-                            cacheCreationTokens={detail.cache_creation_tokens}
-                            cacheReadTokens={detail.cache_read_tokens}
+                            contextTokens={detail.total_tokens}
+                            inputTokens={detail.total_tokens}
                             model={detail.model}
                         />
                     </div>
@@ -367,16 +357,16 @@ export function SessionDetail({
             {/* Smith override panel (slides up) */}
             {showSmithPanel && (
                 <SmithPanel
-                    sessionId={detail.id}
+                    sessionId={detail.session_id}
                     onClose={() => setShowSmithPanel(false)}
                 />
             )}
 
             {/* Steering input */}
             <SteeringInput
-                sessionId={detail.id}
+                sessionId={detail.session_id}
                 cwd={cwd}
-                status={detail.status.type}
+                status={detail.status}
                 onSmithConfig={() => setShowSmithPanel((v) => !v)}
             />
 
@@ -384,8 +374,8 @@ export function SessionDetail({
             <div className="shrink-0 flex items-center justify-end px-3 py-0.5 bg-swarm-bg border-t border-swarm-border/50">
                 <div className="text-[10px] text-swarm-text-dim font-mono">
                     {detail.model ? formatModel(detail.model) : ""}
-                    {detail.total_output_tokens > 0 &&
-                        ` | ${formatTokens(detail.total_output_tokens)} out`}
+                    {detail.total_tokens > 0 &&
+                        ` | ${formatTokens(detail.total_tokens)} tokens`}
                 </div>
             </div>
         </div>
@@ -423,7 +413,7 @@ const MessageBubble = memo(function MessageBubble({ msgIndex, message, getHighli
                     {message.content_type === "tool_use" ? (
                         <>
                             <span className="text-orange-400 font-medium">
-                                {message.tool_name}
+                                tool_use
                             </span>
                             <span className="text-swarm-text-dim">
                                 {renderText(
@@ -474,7 +464,7 @@ const MessageBubble = memo(function MessageBubble({ msgIndex, message, getHighli
     );
 });
 
-function StatusDot({ status }: { status: SessionInfo["status"] }) {
+function StatusDot({ status }: { status: string }) {
     const colors: Record<string, string> = {
         thinking: "bg-blue-400",
         executing_tool: "bg-orange-400",
@@ -484,9 +474,9 @@ function StatusDot({ status }: { status: SessionInfo["status"] }) {
         stopped: "bg-red-400",
         unknown: "bg-gray-500",
     };
-    const color = colors[status.type] || "bg-gray-500";
+    const color = colors[status] || "bg-gray-500";
     const isActive =
-        status.type === "thinking" || status.type === "executing_tool";
+        status === "thinking" || status === "executing_tool";
 
     return (
         <span className="relative flex h-2 w-2">

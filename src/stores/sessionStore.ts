@@ -1,19 +1,20 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { SessionInfo } from "../types/session";
+import type { SessionListItem, IndexProgress } from "../types/session";
 
 interface SessionState {
-    sessions: SessionInfo[];
+    sessions: SessionListItem[];
     selectedSessionId: string | null;
     loading: boolean;
     error: string | null;
     searchQuery: string;
+    indexProgress: IndexProgress | null;
 
     fetchSessions: () => Promise<void>;
     selectSession: (id: string | null) => void;
     setSearchQuery: (q: string) => void;
-    startWatcher: () => Promise<void>;
+    listenForUpdates: () => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -22,11 +23,12 @@ export const useSessionStore = create<SessionState>((set) => ({
     loading: false,
     error: null,
     searchQuery: "",
+    indexProgress: null,
 
     fetchSessions: async () => {
         set({ loading: true, error: null });
         try {
-            const sessions = await invoke<SessionInfo[]>("list_sessions");
+            const sessions = await invoke<SessionListItem[]>("list_sessions");
             set({ sessions, loading: false });
         } catch (e) {
             set({ error: String(e), loading: false });
@@ -41,19 +43,17 @@ export const useSessionStore = create<SessionState>((set) => ({
         set({ searchQuery: q });
     },
 
-    startWatcher: async () => {
+    listenForUpdates: async () => {
         // Guard: only start once
-        if ((useSessionStore as any)._watcherStarted) return;
-        (useSessionStore as any)._watcherStarted = true;
+        if ((useSessionStore as any)._listenerStarted) return;
+        (useSessionStore as any)._listenerStarted = true;
         try {
-            await invoke("start_session_watcher");
-
-            // Listen for session update events from Rust backend
-            await listen<SessionInfo>("session:updated", (event) => {
+            // Surgical upsert on session:updated
+            await listen<SessionListItem>("session:updated", (event) => {
                 const updated = event.payload;
                 set((state) => {
                     const idx = state.sessions.findIndex(
-                        (s) => s.jsonl_path === updated.jsonl_path,
+                        (s) => s.session_id === updated.session_id,
                     );
                     if (idx >= 0) {
                         const sessions = [...state.sessions];
@@ -64,9 +64,14 @@ export const useSessionStore = create<SessionState>((set) => ({
                     }
                 });
             });
+
+            // Index progress events
+            await listen<IndexProgress>("index:progress", (event) => {
+                set({ indexProgress: event.payload });
+            });
         } catch (e) {
-            (useSessionStore as any)._watcherStarted = false;
-            console.error("Failed to start session watcher:", e);
+            (useSessionStore as any)._listenerStarted = false;
+            console.error("Failed to start event listeners:", e);
         }
     },
 }));

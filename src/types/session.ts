@@ -1,49 +1,95 @@
-export type SessionStatus =
-    | { type: "thinking" }
-    | { type: "executing_tool"; name: string }
-    | { type: "awaiting_approval" }
-    | { type: "waiting" }
-    | { type: "idle" }
-    | { type: "stopped" }
-    | { type: "unknown" };
+// --- IPC Data Types (Tantivy backend) ---
 
-export interface SessionInfo {
-    id: string;
+/** list_sessions response */
+export interface SessionListItem {
+    session_id: string;
     project_path: string;
-    encoded_path: string;
-    jsonl_path: string;
-    last_modified: number;
-    status: SessionStatus;
-    model: string | null;
-    input_tokens: number;
-    output_tokens: number;
-    total_output_tokens: number;
-    context_tokens: number;
-    cache_creation_tokens: number;
-    cache_read_tokens: number;
-    git_branch: string | null;
-    cwd: string | null;
+    summary: string;
+    first_prompt: string;
+    git_branch: string;
+    model: string;
+    status: string;
+    message_count: number;
+    total_tokens: number;
+    created_at?: string;
+    modified_at?: string;
+    has_tool_use: boolean;
+    file_exists: boolean;
+    archived: boolean;
 }
 
-export interface ActivityEntry {
-    timestamp: number;
-    activity_type: ActivityType;
-    description: string;
+/** search_sessions response */
+export interface SearchResult {
+    session_id: string;
+    score: number;
+    snippets: MatchSnippet[];
+    project_path?: string;
+    summary?: string;
+    model?: string;
+    modified_at?: string;
+    file_exists: boolean;
 }
 
-export type ActivityType =
-    | { type: "tool_use"; name: string }
-    | { type: "tool_result"; name: string; success: boolean }
-    | { type: "user_message" }
-    | { type: "assistant_message" }
-    | { type: "thinking" };
+export interface MatchSnippet {
+    role: string;
+    content_type: string;
+    snippet: string;
+    timestamp?: string;
+    turn_index: number;
+}
 
-export function statusDisplayName(status: SessionStatus): string {
-    switch (status.type) {
+/** get_conversation response */
+export interface ConversationMessage {
+    role: string;
+    content_type: string;
+    text: string;
+    timestamp?: string;
+    truncated: boolean;
+}
+
+/** get_index_stats response */
+export interface IndexStats {
+    total_sessions: number;
+    active_sessions: number;
+    archived_sessions: number;
+    total_messages: number;
+    segment_count: number;
+    index_size_bytes: number;
+}
+
+/** index:progress event payload */
+export interface IndexProgress {
+    phase: string;
+    current: number;
+    total: number;
+}
+
+/** list_sessions filter */
+export interface SessionFilter {
+    project?: string;
+    git_branch?: string;
+    model?: string;
+    include_archived: boolean;
+}
+
+/** search_sessions filter */
+export interface SearchFilter {
+    project?: string;
+    include_tool_output: boolean;
+    limit?: number;
+    date_from?: string;
+    date_to?: string;
+    role?: string;
+}
+
+// --- Status helpers (status is a plain string from Tantivy) ---
+
+export function statusDisplayName(status: string): string {
+    switch (status) {
         case "thinking":
             return "Thinking";
         case "executing_tool":
-            return `Executing: ${status.name}`;
+            return "Executing Tool";
         case "awaiting_approval":
             return "Awaiting Approval";
         case "waiting":
@@ -52,13 +98,13 @@ export function statusDisplayName(status: SessionStatus): string {
             return "Idle";
         case "stopped":
             return "Stopped";
-        case "unknown":
-            return "Unknown";
+        default:
+            return status || "Unknown";
     }
 }
 
-export function statusColor(status: SessionStatus): string {
-    switch (status.type) {
+export function statusColor(status: string): string {
+    switch (status) {
         case "thinking":
             return "text-blue-400";
         case "executing_tool":
@@ -71,13 +117,13 @@ export function statusColor(status: SessionStatus): string {
             return "text-gray-400";
         case "stopped":
             return "text-red-400";
-        case "unknown":
+        default:
             return "text-gray-500";
     }
 }
 
-export function statusDotColor(status: SessionStatus): string {
-    switch (status.type) {
+export function statusDotColor(status: string): string {
+    switch (status) {
         case "thinking":
             return "bg-blue-400";
         case "executing_tool":
@@ -90,11 +136,11 @@ export function statusDotColor(status: SessionStatus): string {
             return "bg-gray-400";
         case "stopped":
             return "bg-red-400";
-        case "unknown":
+        default:
             return "bg-gray-500";
     }
 }
 
-export function isActiveStatus(status: SessionStatus): boolean {
-    return status.type === "thinking" || status.type === "executing_tool";
+export function isActiveStatus(status: string): boolean {
+    return status === "thinking" || status === "executing_tool";
 }

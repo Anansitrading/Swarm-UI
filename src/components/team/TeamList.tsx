@@ -216,11 +216,11 @@ function MembersList({ members }: { members: TeamMember[] }) {
             const sessions = useSessionStore.getState().sessions;
             const match = sessions.find(
                 (s) =>
-                    s.id === member.agentId ||
-                    s.id.startsWith(member.agentId.slice(0, 8)),
+                    s.session_id === member.agentId ||
+                    s.session_id.startsWith(member.agentId.slice(0, 8)),
             );
             if (match) {
-                selectSession(match.id);
+                selectSession(match.session_id);
                 setMode("single", false);
             }
         },

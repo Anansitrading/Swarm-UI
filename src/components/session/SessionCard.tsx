@@ -1,18 +1,18 @@
-import type { SessionInfo } from "../../types/session";
+import type { SessionListItem } from "../../types/session";
 import { HighlightText } from "./HighlightText";
 
 interface SessionCardProps {
-    session: SessionInfo;
+    session: SessionListItem;
     selected: boolean;
     onClick: () => void;
     getHighlightRanges?: (text: string) => { start: number; end: number }[];
 }
 
 export function SessionCard({ session, selected, onClick, getHighlightRanges }: SessionCardProps) {
-    const timeAgo = formatTimeAgo(session.last_modified);
+    const timeAgo = formatTimeAgo(session.modified_at);
     const isActive =
-        session.status.type === "thinking" ||
-        session.status.type === "executing_tool";
+        session.status === "thinking" ||
+        session.status === "executing_tool";
 
     return (
         <button
@@ -37,18 +37,18 @@ export function SessionCard({ session, selected, onClick, getHighlightRanges }: 
                 <span className="text-xs text-swarm-text truncate">
                     {getHighlightRanges ? (
                         <HighlightText
-                            text={session.git_branch || session.id.slice(0, 8)}
-                            ranges={getHighlightRanges(session.git_branch || session.id.slice(0, 8))}
+                            text={session.git_branch || session.session_id.slice(0, 8)}
+                            ranges={getHighlightRanges(session.git_branch || session.session_id.slice(0, 8))}
                         />
                     ) : (
-                        session.git_branch || session.id.slice(0, 8)
+                        session.git_branch || session.session_id.slice(0, 8)
                     )}
                 </span>
 
-                {/* Session count / message count badges */}
-                {session.input_tokens > 0 && (
+                {/* Token count badge */}
+                {session.total_tokens > 0 && (
                     <span className="text-[9px] text-swarm-text-dim tabular-nums shrink-0">
-                        {formatTokensShort(session.input_tokens)}
+                        {formatTokensShort(session.total_tokens)}
                     </span>
                 )}
 
@@ -62,9 +62,9 @@ export function SessionCard({ session, selected, onClick, getHighlightRanges }: 
             <div className="mt-0.5 pl-5">
                 <span className="text-[9px] font-mono text-swarm-text-dim/60 select-all">
                     {getHighlightRanges ? (
-                        <HighlightText text={session.id} ranges={getHighlightRanges(session.id)} />
+                        <HighlightText text={session.session_id} ranges={getHighlightRanges(session.session_id)} />
                     ) : (
-                        session.id
+                        session.session_id
                     )}
                 </span>
             </div>
@@ -82,19 +82,19 @@ export function SessionCard({ session, selected, onClick, getHighlightRanges }: 
             </div>
 
             {/* Context bar - mini version */}
-            {session.input_tokens > 0 && (
+            {session.total_tokens > 0 && (
                 <div className="mt-1 pl-5">
                     <div className="h-0.5 bg-swarm-border rounded-full overflow-hidden">
                         <div
                             className={`h-full rounded-full transition-all ${
-                                session.input_tokens / 200000 > 0.8
+                                session.total_tokens / 200000 > 0.8
                                     ? "bg-red-500"
-                                    : session.input_tokens / 200000 > 0.6
+                                    : session.total_tokens / 200000 > 0.6
                                       ? "bg-yellow-500"
                                       : "bg-swarm-accent"
                             }`}
                             style={{
-                                width: `${Math.min((session.input_tokens / 200000) * 100, 100)}%`,
+                                width: `${Math.min((session.total_tokens / 200000) * 100, 100)}%`,
                             }}
                         />
                     </div>
@@ -104,7 +104,7 @@ export function SessionCard({ session, selected, onClick, getHighlightRanges }: 
     );
 }
 
-function StatusDot({ status }: { status: SessionInfo["status"] }) {
+function StatusDot({ status }: { status: string }) {
     const colors: Record<string, string> = {
         thinking: "bg-blue-400",
         executing_tool: "bg-orange-400",
@@ -114,9 +114,9 @@ function StatusDot({ status }: { status: SessionInfo["status"] }) {
         stopped: "bg-red-400",
         unknown: "bg-gray-500",
     };
-    const color = colors[status.type] || "bg-gray-500";
+    const color = colors[status] || "bg-gray-500";
     const isActive =
-        status.type === "thinking" || status.type === "executing_tool";
+        status === "thinking" || status === "executing_tool";
 
     return (
         <span className="relative flex h-1.5 w-1.5">
@@ -145,12 +145,14 @@ function formatTokensShort(n: number): string {
     return String(n);
 }
 
-function formatTimeAgo(epochSec: number): string {
-    if (!epochSec) return "";
-    const now = Date.now() / 1000;
-    const diff = now - epochSec;
-    if (diff < 60) return "just now";
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+function formatTimeAgo(dateStr?: string): string {
+    if (!dateStr) return "";
+    const epochMs = Date.parse(dateStr);
+    if (isNaN(epochMs)) return "";
+    const now = Date.now();
+    const diffSec = (now - epochMs) / 1000;
+    if (diffSec < 60) return "just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    return `${Math.floor(diffSec / 86400)}d ago`;
 }

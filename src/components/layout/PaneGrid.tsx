@@ -77,7 +77,7 @@ export function PaneGrid() {
         newContent: string;
     } | null>(null);
 
-    const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+    const selectedSession = sessions.find((s) => s.session_id === selectedSessionId);
 
     const handleOpenTerminal = useCallback(
         async (cwd: string, agentName?: string) => {
@@ -363,7 +363,6 @@ export function PaneGrid() {
                         ) : (
                             <AgentLauncher
                                 cwd={
-                                    selectedSession.cwd ||
                                     selectedSession.project_path
                                 }
                                 onLaunch={handleOpenTerminal}
@@ -477,7 +476,7 @@ function MultiSessionView({
     onShowDiff,
 }: {
     mode: LayoutMode;
-    sessions: import("../../types/session").SessionInfo[];
+    sessions: import("../../types/session").SessionListItem[];
     onOpenTerminal: (cwd: string) => void;
     onResumeSession: (sessionId: string, cwd: string) => void;
     onKillProcess: (pid: number) => void;
@@ -491,7 +490,7 @@ function MultiSessionView({
         <>
             {recentSessions.map((session) => (
                 <div
-                    key={session.id}
+                    key={session.session_id}
                     className="min-h-0 rounded border border-swarm-border overflow-hidden"
                 >
                     <SessionDetail
@@ -522,7 +521,7 @@ function MultiSessionView({
 function MonitoringOverview({
     sessions,
 }: {
-    sessions: import("../../types/session").SessionInfo[];
+    sessions: import("../../types/session").SessionListItem[];
     onOpenTerminal?: (cwd: string) => void;
     onKillProcess?: (pid: number) => void;
     onShowDiff?: (repoPath: string) => void;
@@ -543,17 +542,17 @@ function MonitoringOverview({
             {sessions.slice(0, 9).map((session) => {
                 const name = session.project_path.split("/").pop() || "Unknown";
                 const isActive =
-                    session.status.type === "thinking" ||
-                    session.status.type === "executing_tool";
+                    session.status === "thinking" ||
+                    session.status === "executing_tool";
 
                 return (
                     <button
-                        key={session.id}
+                        key={session.session_id}
                         onClick={() =>
                             selectSession(
-                                selectedSessionId === session.id
+                                selectedSessionId === session.session_id
                                     ? null
-                                    : session.id,
+                                    : session.session_id,
                             )
                         }
                         className={`text-left p-3 rounded-lg border transition-colors ${
@@ -573,22 +572,16 @@ function MonitoringOverview({
                                 {session.git_branch}
                             </div>
                         )}
-                        {(session.context_tokens > 0 ||
-                            session.input_tokens > 0) && (
+                        {session.total_tokens > 0 && (
                             <div className="mb-1">
                                 <div className="flex justify-between text-[10px] text-swarm-text-dim mb-0.5">
                                     <span>
-                                        {formatTokens(
-                                            session.context_tokens ||
-                                                session.input_tokens,
-                                        )}
+                                        {formatTokens(session.total_tokens)}
                                         /{formatTokens(200000)}
                                     </span>
                                     <span>
                                         {(
-                                            ((session.context_tokens ||
-                                                session.input_tokens) /
-                                                200000) *
+                                            (session.total_tokens / 200000) *
                                             100
                                         ).toFixed(0)}
                                         %
@@ -598,7 +591,7 @@ function MonitoringOverview({
                                     <div
                                         className="h-full bg-swarm-accent rounded-full"
                                         style={{
-                                            width: `${Math.min(((session.context_tokens || session.input_tokens) / 200000) * 100, 100)}%`,
+                                            width: `${Math.min((session.total_tokens / 200000) * 100, 100)}%`,
                                         }}
                                     />
                                 </div>
@@ -610,7 +603,7 @@ function MonitoringOverview({
                                     ? formatModel(session.model)
                                     : ""}
                             </span>
-                            <span>{formatTimeAgo(session.last_modified)}</span>
+                            <span>{formatTimeAgo(session.modified_at)}</span>
                         </div>
                     </button>
                 );
@@ -622,7 +615,7 @@ function MonitoringOverview({
 function StatusDot({
     status,
 }: {
-    status: import("../../types/session").SessionStatus;
+    status: string;
 }) {
     const colors: Record<string, string> = {
         thinking: "bg-blue-400",
@@ -633,9 +626,9 @@ function StatusDot({
         stopped: "bg-red-400",
         unknown: "bg-gray-500",
     };
-    const color = colors[status.type] || "bg-gray-500";
+    const color = colors[status] || "bg-gray-500";
     const isActive =
-        status.type === "thinking" || status.type === "executing_tool";
+        status === "thinking" || status === "executing_tool";
 
     return (
         <span className="relative flex h-2 w-2">
@@ -859,14 +852,16 @@ function formatTokens(n: number): string {
     return String(n);
 }
 
-function formatTimeAgo(epochSec: number): string {
-    if (!epochSec) return "";
-    const now = Date.now() / 1000;
-    const diff = now - epochSec;
-    if (diff < 60) return "just now";
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+function formatTimeAgo(dateStr?: string): string {
+    if (!dateStr) return "";
+    const epochMs = Date.parse(dateStr);
+    if (isNaN(epochMs)) return "";
+    const now = Date.now();
+    const diffSec = (now - epochMs) / 1000;
+    if (diffSec < 60) return "just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    return `${Math.floor(diffSec / 86400)}d ago`;
 }
 
 function DiffErrorToast({ message }: { message: string }) {

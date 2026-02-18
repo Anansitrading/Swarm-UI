@@ -1,4 +1,3 @@
-import type { SessionStatus } from "../../types/session";
 import {
   statusDisplayName,
   statusColor,
@@ -7,7 +6,7 @@ import {
 } from "../../types/session";
 
 interface StatusBadgeProps {
-  status: SessionStatus;
+  status: string;
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {

@@ -3,13 +3,20 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { SessionCard } from "./SessionCard";
 import { useSessionSearch } from "../../hooks/useSessionSearch";
 import { HighlightText } from "./HighlightText";
-import type { SessionInfo } from "../../types/session";
+import type { SessionListItem } from "../../types/session";
 
 interface RepoGroup {
     name: string;
     path: string;
-    sessions: SessionInfo[];
+    sessions: SessionListItem[];
     expanded: boolean;
+}
+
+/** Parse ISO date string to epoch ms, fallback to 0 */
+function dateToEpoch(dateStr?: string): number {
+    if (!dateStr) return 0;
+    const ms = Date.parse(dateStr);
+    return isNaN(ms) ? 0 : ms;
 }
 
 export function SessionList() {
@@ -19,24 +26,26 @@ export function SessionList() {
         loading,
         fetchSessions,
         selectSession,
-        startWatcher,
     } = useSessionStore();
     const { query: search, setQuery: setSearch, matchedSessionIds, isSearching, getHighlightRanges } = useSessionSearch(sessions);
     const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
     // Track repos the user has manually collapsed so auto-expand doesn't fight them
     const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(new Set());
 
+    // App.tsx calls fetchSessions() and listenForUpdates() on mount.
+    // SessionList only needs to ensure sessions are loaded if they aren't yet.
     useEffect(() => {
-        fetchSessions();
-        startWatcher();
-    }, [fetchSessions, startWatcher]);
+        if (sessions.length === 0 && !loading) {
+            fetchSessions();
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Group sessions by repository (project_path)
-    const repoGroups = useMemo(() => {
-        const groups = new Map<string, SessionInfo[]>();
+    const baseGroups = useMemo(() => {
+        const groups = new Map<string, SessionListItem[]>();
 
         for (const session of sessions) {
-            const repoPath = session.project_path || session.encoded_path;
+            const repoPath = session.project_path;
             const existing = groups.get(repoPath) || [];
             existing.push(session);
             groups.set(repoPath, existing);
@@ -49,28 +58,36 @@ export function SessionList() {
                 name,
                 path,
                 sessions: groupSessions.sort(
-                    (a, b) => b.last_modified - a.last_modified,
+                    (a, b) => dateToEpoch(b.modified_at) - dateToEpoch(a.modified_at),
                 ),
-                expanded: expandedRepos.has(path),
+                expanded: false, // Applied later from expandedRepos
             });
         }
 
         result.sort((a, b) => {
-            const aMax = Math.max(...a.sessions.map((s) => s.last_modified));
-            const bMax = Math.max(...b.sessions.map((s) => s.last_modified));
+            const aMax = Math.max(...a.sessions.map((s) => dateToEpoch(s.modified_at)));
+            const bMax = Math.max(...b.sessions.map((s) => dateToEpoch(s.modified_at)));
             return bMax - aMax;
         });
 
         return result;
-    }, [sessions, expandedRepos]);
+    }, [sessions]);
 
-    // Filter by search - use MiniSearch results when searching, otherwise show all
+    // Apply expansion state separately to break circular dependency
+    const repoGroups = useMemo(() => {
+        return baseGroups.map(g => ({
+            ...g,
+            expanded: expandedRepos.has(g.path),
+        }));
+    }, [baseGroups, expandedRepos]);
+
+    // Filter by search
     const filteredGroups = useMemo(() => {
         if (!isSearching || !matchedSessionIds) return repoGroups;
         return repoGroups
             .map((g) => ({
                 ...g,
-                sessions: g.sessions.filter((s) => matchedSessionIds.has(s.id)),
+                sessions: g.sessions.filter((s) => matchedSessionIds.has(s.session_id)),
                 expanded: true, // Auto-expand all groups when searching
             }))
             .filter((g) => g.sessions.length > 0);
@@ -81,11 +98,9 @@ export function SessionList() {
             const next = new Set(prev);
             if (next.has(path)) {
                 next.delete(path);
-                // Remember that user manually collapsed this
                 setManuallyCollapsed((mc) => new Set(mc).add(path));
             } else {
                 next.add(path);
-                // User re-expanded, clear the manual collapse flag
                 setManuallyCollapsed((mc) => {
                     const updated = new Set(mc);
                     updated.delete(path);
@@ -97,29 +112,29 @@ export function SessionList() {
     };
 
     // Auto-expand repos with selected session or active sessions,
-    // but respect repos the user has manually collapsed
+    // but respect repos the user has manually collapsed.
     useEffect(() => {
-        const newExpanded = new Set(expandedRepos);
-        let changed = false;
-        for (const group of repoGroups) {
-            if (manuallyCollapsed.has(group.path)) continue;
-            const hasSelected = group.sessions.some(
-                (s) => s.id === selectedSessionId,
-            );
-            const hasActive = group.sessions.some(
-                (s) =>
-                    s.status.type === "thinking" ||
-                    s.status.type === "executing_tool",
-            );
-            if ((hasSelected || hasActive) && !newExpanded.has(group.path)) {
-                newExpanded.add(group.path);
-                changed = true;
+        setExpandedRepos(prev => {
+            const newExpanded = new Set(prev);
+            let changed = false;
+            for (const group of baseGroups) {
+                if (manuallyCollapsed.has(group.path)) continue;
+                const hasSelected = group.sessions.some(
+                    (s) => s.session_id === selectedSessionId,
+                );
+                const hasActive = group.sessions.some(
+                    (s) =>
+                        s.status === "thinking" ||
+                        s.status === "executing_tool",
+                );
+                if ((hasSelected || hasActive) && !newExpanded.has(group.path)) {
+                    newExpanded.add(group.path);
+                    changed = true;
+                }
             }
-        }
-        if (changed) {
-            setExpandedRepos(newExpanded);
-        }
-    }, [selectedSessionId, repoGroups, manuallyCollapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+            return changed ? newExpanded : prev;
+        });
+    }, [selectedSessionId, baseGroups, manuallyCollapsed]);
 
     const totalSessions = sessions.length;
 
@@ -210,7 +225,7 @@ function RepoSection({
 }) {
     const activeCount = group.sessions.filter(
         (s) =>
-            s.status.type === "thinking" || s.status.type === "executing_tool",
+            s.status === "thinking" || s.status === "executing_tool",
     ).length;
 
     return (
@@ -262,10 +277,10 @@ function RepoSection({
                 <div className="pb-1">
                     {group.sessions.map((session) => (
                         <SessionCard
-                            key={session.jsonl_path}
+                            key={session.session_id}
                             session={session}
-                            selected={selectedSessionId === session.id}
-                            onClick={() => onSelectSession(session.id)}
+                            selected={selectedSessionId === session.session_id}
+                            onClick={() => onSelectSession(session.session_id)}
                             getHighlightRanges={getHighlightRanges}
                         />
                     ))}
