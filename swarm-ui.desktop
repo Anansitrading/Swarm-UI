@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Swarm UI
+Comment=Swarm orchestration dashboard
+Exec=/home/devuser/Swarm-UI/src-tauri/target/release/swarm-ui
+Icon=/home/devuser/Swarm-UI/src-tauri/icons/128x128.png
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+StartupWMClass=swarm-ui
