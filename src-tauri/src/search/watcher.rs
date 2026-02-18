@@ -20,7 +20,7 @@ struct SessionsIndexFile {
 }
 
 /// Convert a tantivy DateTime to an RFC 3339 string.
-fn format_tantivy_date(dt: tantivy::DateTime) -> String {
+pub fn format_tantivy_date(dt: tantivy::DateTime) -> String {
     let secs = dt.into_timestamp_secs();
     chrono::DateTime::from_timestamp(secs, 0)
         .map(|d| d.to_rfc3339())
@@ -28,7 +28,7 @@ fn format_tantivy_date(dt: tantivy::DateTime) -> String {
 }
 
 /// Convert a session TantivyDocument to a SessionListItem.
-fn session_doc_to_list_item(doc: &TantivyDocument, schema: &IndexSchema) -> SessionListItem {
+pub fn session_doc_to_list_item(doc: &TantivyDocument, schema: &IndexSchema) -> SessionListItem {
     SessionListItem {
         session_id: doc.get_str(schema.session_id).unwrap_or("").to_string(),
         project_path: doc.get_str(schema.project_path).unwrap_or("").to_string(),
