@@ -67,6 +67,7 @@ pub fn run() {
             commands::sprite::sprite_update,
             commands::sprite::sprite_delete,
             commands::sprite::sprite_exec,
+            commands::sprite::sprite_exec_command,
             commands::sprite::sprite_list_exec_sessions,
             commands::sprite::sprite_kill_exec_session,
             commands::sprite::sprite_checkpoint_create,

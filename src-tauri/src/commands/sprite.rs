@@ -80,6 +80,17 @@ pub async fn sprite_exec(
     Ok(output)
 }
 
+/// Execute a shell command on a sprite via query-param API (returns raw output)
+#[tauri::command]
+pub async fn sprite_exec_command(
+    name: String,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let client = state.get_sprites_client()?;
+    client.exec_command(&name, &command).await
+}
+
 /// List exec sessions (real API)
 #[tauri::command]
 pub async fn sprite_list_exec_sessions(

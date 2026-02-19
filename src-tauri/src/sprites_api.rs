@@ -565,6 +565,32 @@ impl SpritesClient {
             .map_err(|e| AppError::Internal(format!("Failed to parse exec result: {e}")))
     }
 
+    /// Execute a shell command on a sprite via query-param API.
+    /// Commands go as repeated `cmd` query params: ?cmd=sh&cmd=-c&cmd=<shell_cmd>
+    pub async fn exec_command(&self, name: &str, cmd: &str) -> Result<String, AppError> {
+        let resp = self
+            .http
+            .post(self.api_url(&format!("/sprites/{name}/exec")))
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(30))
+            .query(&[("cmd", "sh"), ("cmd", "-c"), ("cmd", cmd)])
+            .send()
+            .await
+            .map_err(|e| reqwest_err(&e, &format!("exec on '{name}'")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "exec on '{name}' returned {status}: {body}"
+            )));
+        }
+
+        resp.text()
+            .await
+            .map_err(|e| AppError::Internal(format!("exec read error on '{name}': {e}")))
+    }
+
     pub async fn list_exec_sessions(&self, name: &str) -> Result<Vec<ExecSession>, AppError> {
         let resp = self
             .http
