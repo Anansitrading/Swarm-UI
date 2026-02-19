@@ -16,25 +16,20 @@ export function SpriteExpandedPanel({ sprite }: Props) {
   return (
     <div className="border-t border-zinc-800 mt-1">
       {/* Tab bar */}
-      <div className="flex border-b border-zinc-800 px-3 items-end justify-between">
-        <div className="flex">
-          {TABS.map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
-                activeTab === tab
-                  ? 'border-zinc-400 text-zinc-100'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        {sprite.status !== 'warm' && sprite.status !== 'running' && (
-          <span className="text-xs text-zinc-600 pb-2 pr-1">{sprite.status} — some tabs unavailable</span>
-        )}
+      <div className="flex border-b border-zinc-800 px-3">
+        {TABS.map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === tab
+                ? 'border-zinc-400 text-zinc-100'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}

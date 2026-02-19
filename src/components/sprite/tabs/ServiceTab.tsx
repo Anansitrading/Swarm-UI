@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState, useCallback } from 'react'
 import type { SpriteInfo, ServiceStreamEvent } from '../../../types/sprite'
 import { useSpriteStore } from '../../../stores/spriteStore'
+import { useAutoWake } from '../hooks/useAutoWake'
+import { WakingOverlay } from '../WakingOverlay'
 
 export function ServiceTab({ sprite }: { sprite: SpriteInfo }) {
   const { services, serviceLogs, listServices, startService, stopService, getServiceLogs, getOp } = useSpriteStore()
@@ -10,15 +12,8 @@ export function ServiceTab({ sprite }: { sprite: SpriteInfo }) {
   const svcs = services[name] ?? []
   const listOp = getOp(`${name}:services`)
 
-  const isReachable = sprite.status === 'warm' || sprite.status === 'running'
-
-  useEffect(() => {
-    if (isReachable) listServices(name)
-  }, [name, isReachable])
-
-  if (!isReachable) {
-    return <p className="text-xs text-zinc-600">Sprite is <span className="text-zinc-400 font-mono">{sprite.status}</span> — services require a warm sprite.</p>
-  }
+  const onReady = useCallback(() => listServices(name), [name])
+  const { wakeState, retry } = useAutoWake(name, sprite.status, onReady)
 
   const handleToggle = async (serviceName: string, currentStatus: string) => {
     if (currentStatus === 'running') await stopService(name, serviceName)
@@ -32,6 +27,10 @@ export function ServiceTab({ sprite }: { sprite: SpriteInfo }) {
     }
     setOpenLogService(serviceName)
     getServiceLogs(name, serviceName)
+  }
+
+  if (wakeState !== 'ready') {
+    return <WakingOverlay wakeState={wakeState} retry={retry} />
   }
 
   return (

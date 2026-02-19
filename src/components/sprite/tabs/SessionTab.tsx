@@ -1,6 +1,8 @@
-import { useEffect } from 'react'
+import { useCallback } from 'react'
 import type { SpriteInfo } from '../../../types/sprite'
 import { useSpriteStore } from '../../../stores/spriteStore'
+import { useAutoWake } from '../hooks/useAutoWake'
+import { WakingOverlay } from '../WakingOverlay'
 
 export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
   const { execSessions, listExecSessions, killExecSession, getOp } = useSpriteStore()
@@ -9,32 +11,21 @@ export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
   const sessions = execSessions[name] ?? []
   const listOp   = getOp(`${name}:exec-sessions`)
 
-  const isReachable = sprite.status === 'warm' || sprite.status === 'running'
-
-  useEffect(() => {
-    if (isReachable) listExecSessions(name)
-  }, [name, isReachable])
+  const onReady = useCallback(() => listExecSessions(name), [name])
+  const { wakeState, retry } = useAutoWake(name, sprite.status, onReady)
 
   const handleKill = (sessionId: string) =>
     killExecSession(name, sessionId, 'SIGTERM')
 
-  if (!isReachable) {
-    return (
-      <div className="text-xs text-zinc-600 space-y-1">
-        <p>Sprite is <span className="text-zinc-400 font-mono">{sprite.status}</span> — exec sessions are only available when warm or running.</p>
-        <p className="text-zinc-700">Open a terminal to wake this sprite.</p>
-      </div>
-    )
+  if (wakeState !== 'ready') {
+    return <WakingOverlay wakeState={wakeState} retry={retry} />
   }
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs text-zinc-500">{sessions.length} session{sessions.length !== 1 ? 's' : ''}</span>
-        <button
-          onClick={() => listExecSessions(name)}
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-        >
+        <button onClick={() => listExecSessions(name)} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
           Refresh
         </button>
       </div>

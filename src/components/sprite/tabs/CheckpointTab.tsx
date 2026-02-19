@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
+import { useCallback } from 'react'
 import type { SpriteInfo } from '../../../types/sprite'
 import { useSpriteStore } from '../../../stores/spriteStore'
 import { useModalStore }  from '../../../stores/modalStore'
+import { useAutoWake } from '../hooks/useAutoWake'
+import { WakingOverlay } from '../WakingOverlay'
 
 export function CheckpointTab({ sprite }: { sprite: SpriteInfo }) {
   const { checkpoints, listCheckpoints, createCheckpoint, restoreCheckpoint, getOp } = useSpriteStore()
@@ -13,11 +15,8 @@ export function CheckpointTab({ sprite }: { sprite: SpriteInfo }) {
   const createOp = getOp(`${name}:checkpoint-create`)
   const restoreOp = getOp(`${name}:checkpoint-restore`)
 
-  const isReachable = sprite.status === 'warm' || sprite.status === 'running'
-
-  useEffect(() => {
-    if (isReachable) listCheckpoints(name)
-  }, [name, isReachable])
+  const onReady = useCallback(() => listCheckpoints(name), [name])
+  const { wakeState, retry } = useAutoWake(name, sprite.status, onReady)
 
   const handleCreate = async () => {
     const comment = await prompt({ title: 'New checkpoint', placeholder: 'Description (optional)' })
@@ -34,6 +33,10 @@ export function CheckpointTab({ sprite }: { sprite: SpriteInfo }) {
     })
     if (!ok) return
     await restoreCheckpoint(name, checkpointId)
+  }
+
+  if (wakeState !== 'ready') {
+    return <WakingOverlay wakeState={wakeState} retry={retry} />
   }
 
   return (
