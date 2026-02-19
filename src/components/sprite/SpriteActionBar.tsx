@@ -39,7 +39,7 @@ export function SpriteActionBar({ sprite, onTerminal, onDeleted }: Props) {
       <ActionBtn
         title="Open terminal"
         onClick={handleTerminal}
-        disabled={sprite.status === 'cold'}
+        disabled={sprite.status === 'cold' || sprite.status === 'deleted'}
       >
         <TerminalIcon />
       </ActionBtn>

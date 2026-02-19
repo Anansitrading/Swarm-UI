@@ -363,6 +363,7 @@ pub async fn sprite_ws_spawn(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<PtyInfo, AppError> {
+    tracing::info!("sprite_ws_spawn called for '{sprite_name}'");
     let client = state.get_sprites_client()?;
     let c = cols.unwrap_or(80);
     let r = rows.unwrap_or(24);
@@ -401,6 +402,48 @@ pub async fn sprite_ws_resize(
 #[tauri::command]
 pub async fn sprite_ws_kill(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
     crate::sprites_ws::ws_kill(&id, &state.ws_state).await
+}
+
+// ==========================================
+// Claude provisioning
+// ==========================================
+
+/// Push local ~/.claude/.credentials.json to a sprite so Claude Code can authenticate
+#[tauri::command]
+pub async fn sprite_provision_claude(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    tracing::info!("sprite_provision_claude called for '{name}'");
+    // Read local credentials
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::Internal("Cannot determine home directory".into()))?;
+    let creds_path = home.join(".claude").join(".credentials.json");
+
+    let creds_content = std::fs::read_to_string(&creds_path).map_err(|e| {
+        AppError::Internal(format!(
+            "Cannot read {}: {e}",
+            creds_path.display()
+        ))
+    })?;
+
+    // Base64 encode to avoid shell escaping issues
+    let b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        creds_content.as_bytes(),
+    );
+
+    // Push to sprite: create dir, decode and write, set permissions
+    let client = state.get_sprites_client()?;
+    let cmd = format!(
+        "mkdir -p ~/.claude && echo '{}' | base64 -d > ~/.claude/.credentials.json && chmod 600 ~/.claude/.credentials.json",
+        b64
+    );
+    client.exec_command(&name, &cmd).await.map_err(|e| {
+        AppError::Internal(format!("Failed to provision credentials on '{name}': {e}"))
+    })?;
+
+    Ok(())
 }
 
 // ==========================================

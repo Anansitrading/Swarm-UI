@@ -86,6 +86,8 @@ pub fn run() {
             commands::sprite::sprite_ws_write,
             commands::sprite::sprite_ws_resize,
             commands::sprite::sprite_ws_kill,
+            // Sprite Claude provisioning
+            commands::sprite::sprite_provision_claude,
             // Sprite config commands
             commands::sprite::sprite_configure,
             commands::sprite::sprite_test_connection,

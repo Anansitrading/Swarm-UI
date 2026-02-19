@@ -134,7 +134,7 @@ export function SpriteList({ onSelect }: SpriteListProps) {
             onClick={() => toggleExpand(sprite.name)}
           >
             <ChevronIcon expanded={expanded.has(sprite.name)} />
-            <span className="text-sm text-zinc-200 font-medium truncate flex-1 font-mono">
+            <span className="text-sm text-zinc-200 font-medium truncate flex-1 font-mono" title={sprite.name}>
               {sprite.name}
             </span>
             {sprite.region && (

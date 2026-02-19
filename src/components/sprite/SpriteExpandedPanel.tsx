@@ -3,9 +3,9 @@ import type { SpriteInfo } from '../../types/sprite'
 import { InfoTab }        from './tabs/InfoTab'
 import { CheckpointTab }  from './tabs/CheckpointTab'
 import { SessionTab }     from './tabs/SessionTab'
-import { ServiceTab }     from './tabs/ServiceTab'
+import { FilesTab }       from './tabs/FilesTab'
 
-const TABS = ['Info', 'Checkpoints', 'Sessions', 'Services'] as const
+const TABS = ['Info', 'Checkpoints', 'Sessions', 'Files'] as const
 type Tab = typeof TABS[number]
 
 interface Props { sprite: SpriteInfo }
@@ -37,7 +37,7 @@ export function SpriteExpandedPanel({ sprite }: Props) {
         {activeTab === 'Info'        && <InfoTab       sprite={sprite} />}
         {activeTab === 'Checkpoints' && <CheckpointTab sprite={sprite} />}
         {activeTab === 'Sessions'    && <SessionTab    sprite={sprite} />}
-        {activeTab === 'Services'    && <ServiceTab    sprite={sprite} />}
+        {activeTab === 'Files'       && <FilesTab      sprite={sprite} />}
       </div>
     </div>
   )
