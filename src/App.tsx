@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { AppShell } from "./components/layout/AppShell";
+import { ConfirmationModal } from "./components/sprite/ConfirmationModal";
 import { useSessionStore } from "./stores/sessionStore";
 import { useSpriteStore } from "./stores/spriteStore";
 import { useLayoutShortcuts } from "./hooks/useLayout";
@@ -19,7 +20,12 @@ function App() {
         fetchSprites();
     }, [fetchSessions, listenForUpdates, fetchSprites]);
 
-    return <AppShell />;
+    return (
+        <>
+            <AppShell />
+            <ConfirmationModal />
+        </>
+    );
 }
 
 export default App;

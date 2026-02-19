@@ -2,34 +2,65 @@ use crate::error::AppError;
 use crate::sprites_api;
 use crate::state::{AppState, PtyInfo};
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
-#[derive(Debug, Serialize)]
-pub struct SpriteInfo {
-    pub name: String,
-    pub status: String,
-    pub id: Option<String>,
-    pub region: Option<String>,
-}
+// ==========================================
+// Sprites CRUD
+// ==========================================
 
 /// List all sprites via REST API
 #[tauri::command]
-pub async fn sprite_list(state: State<'_, AppState>) -> Result<Vec<SpriteInfo>, AppError> {
+pub async fn sprite_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<sprites_api::SpriteInfo>, AppError> {
     let client = state.get_sprites_client()?;
-    let sprites = client.list_sprites().await?;
-
-    Ok(sprites
-        .into_iter()
-        .map(|s| SpriteInfo {
-            name: s.name,
-            status: s.status,
-            id: s.id,
-            region: s.region,
-        })
-        .collect())
+    client.list_sprites().await
 }
 
-/// Execute a command on a sprite via REST API (non-interactive)
+/// Get sprite details
+#[tauri::command]
+pub async fn sprite_get(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<sprites_api::SpriteDetail, AppError> {
+    let client = state.get_sprites_client()?;
+    client.get_sprite(&name).await
+}
+
+/// Create a new sprite
+#[tauri::command]
+pub async fn sprite_create(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<sprites_api::SpriteInfo, AppError> {
+    let client = state.get_sprites_client()?;
+    client.create_sprite(&name).await
+}
+
+/// Update sprite settings (url_settings.auth)
+#[tauri::command]
+pub async fn sprite_update(
+    name: String,
+    url_auth: String,
+    state: State<'_, AppState>,
+) -> Result<sprites_api::SpriteDetail, AppError> {
+    let client = state.get_sprites_client()?;
+    client.update_sprite(&name, &url_auth).await
+}
+
+/// Delete a sprite
+#[tauri::command]
+pub async fn sprite_delete(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    client.delete_sprite(&name).await
+}
+
+// ==========================================
+// Exec
+// ==========================================
+
+/// Execute a command on a sprite via HTTP POST (non-interactive)
 #[tauri::command]
 pub async fn sprite_exec(
     name: String,
@@ -49,16 +80,50 @@ pub async fn sprite_exec(
     Ok(output)
 }
 
-/// Create a checkpoint for a sprite via REST API
+/// List exec sessions (real API)
+#[tauri::command]
+pub async fn sprite_list_exec_sessions(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<sprites_api::ExecSession>, AppError> {
+    let client = state.get_sprites_client()?;
+    client.list_exec_sessions(&name).await
+}
+
+/// Kill an exec session via NDJSON streaming
+#[tauri::command]
+pub async fn sprite_kill_exec_session(
+    name: String,
+    session_id: String,
+    signal: Option<String>,
+    on_event: Channel<sprites_api::ExecKillEvent>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    let sig = signal.as_deref().unwrap_or("SIGTERM");
+    let resp = client
+        .kill_exec_session_stream(&name, &session_id, sig)
+        .await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::ExecKillEvent::is_terminal).await
+}
+
+// ==========================================
+// Checkpoints — NDJSON streaming via Channel
+// ==========================================
+
+/// Create a checkpoint with NDJSON streaming progress
 #[tauri::command]
 pub async fn sprite_checkpoint_create(
     name: String,
-    description: String,
+    comment: Option<String>,
+    on_event: Channel<sprites_api::StreamEvent>,
     state: State<'_, AppState>,
-) -> Result<String, AppError> {
+) -> Result<(), AppError> {
     let client = state.get_sprites_client()?;
-    let checkpoint = client.create_checkpoint(&name, &description).await?;
-    Ok(format!("Checkpoint {} created", checkpoint.id))
+    let resp = client
+        .create_checkpoint_stream(&name, comment.as_deref())
+        .await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::StreamEvent::is_terminal).await
 }
 
 /// List checkpoints for a sprite
@@ -71,39 +136,212 @@ pub async fn sprite_list_checkpoints(
     client.list_checkpoints(&name).await
 }
 
-/// Restore a checkpoint
+/// Restore a checkpoint with NDJSON streaming progress
 #[tauri::command]
 pub async fn sprite_restore_checkpoint(
     name: String,
     checkpoint_id: String,
+    on_event: Channel<sprites_api::StreamEvent>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let client = state.get_sprites_client()?;
-    client.restore_checkpoint(&name, &checkpoint_id).await
+    let resp = client
+        .restore_checkpoint_stream(&name, &checkpoint_id)
+        .await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::StreamEvent::is_terminal).await
 }
 
-/// Delete a sprite
-#[tauri::command]
-pub async fn sprite_delete(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
-    let client = state.get_sprites_client()?;
-    client.delete_sprite(&name).await
-}
+// ==========================================
+// Services — NDJSON streaming via Channel
+// ==========================================
 
-/// Create a new sprite
+/// List services for a sprite
 #[tauri::command]
-pub async fn sprite_create(
+pub async fn sprite_list_services(
     name: String,
     state: State<'_, AppState>,
-) -> Result<SpriteInfo, AppError> {
+) -> Result<Vec<sprites_api::Service>, AppError> {
     let client = state.get_sprites_client()?;
-    let sprite = client.create_sprite(&name).await?;
-    Ok(SpriteInfo {
-        name: sprite.name,
-        status: sprite.status,
-        id: sprite.id,
-        region: sprite.region,
-    })
+    client.list_services(&name).await
 }
+
+/// Start a service with NDJSON streaming progress
+#[tauri::command]
+pub async fn sprite_start_service(
+    name: String,
+    service_name: String,
+    on_event: Channel<sprites_api::ServiceStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    let resp = client.start_service_stream(&name, &service_name).await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::ServiceStreamEvent::is_terminal)
+        .await
+}
+
+/// Stop a service with NDJSON streaming progress
+#[tauri::command]
+pub async fn sprite_stop_service(
+    name: String,
+    service_name: String,
+    on_event: Channel<sprites_api::ServiceStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    let resp = client.stop_service_stream(&name, &service_name).await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::ServiceStreamEvent::is_terminal)
+        .await
+}
+
+/// Get service logs with NDJSON streaming
+#[tauri::command]
+pub async fn sprite_get_service_logs(
+    name: String,
+    service_name: String,
+    lines: Option<u32>,
+    on_event: Channel<sprites_api::ServiceStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let client = state.get_sprites_client()?;
+    let resp = client
+        .get_service_logs_stream(&name, &service_name, lines)
+        .await?;
+    sprites_api::pipe_ndjson_stream(resp, &on_event, sprites_api::ServiceStreamEvent::is_terminal)
+        .await
+}
+
+// ==========================================
+// Sprite introspection (shell commands on VM)
+// ==========================================
+
+#[derive(Debug, Serialize)]
+pub struct SpriteSessionInfo {
+    pub pid: String,
+    pub command: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpriteClaudeSessionInfo {
+    pub session_id: String,
+    pub project_dir: String,
+    pub jsonl_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpriteTeamInfo {
+    pub name: String,
+    pub member_count: u32,
+}
+
+/// List exec sessions running on a sprite (via ps aux on the VM)
+#[tauri::command]
+pub async fn sprite_list_sessions(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteSessionInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "ps aux --no-headers 2>/dev/null | grep -v 'grep' | head -20 || echo ''",
+        )
+        .await?;
+    let mut sessions = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(11, char::is_whitespace).collect();
+        if parts.len() >= 11 {
+            let cmd = parts[10].to_string();
+            let pid = parts[1].to_string();
+            if cmd.contains("claude") || cmd.contains("node") || cmd.contains("bash") {
+                sessions.push(SpriteSessionInfo {
+                    pid,
+                    command: cmd,
+                    status: "running".to_string(),
+                });
+            }
+        }
+    }
+    Ok(sessions)
+}
+
+/// List Claude Code sessions found on a sprite
+#[tauri::command]
+pub async fn sprite_list_claude_sessions(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteClaudeSessionInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -20",
+        )
+        .await?;
+
+    let mut sessions = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            let path = parts[1];
+            if let Some(fname) = path.rsplit('/').next() {
+                let session_id = fname.trim_end_matches(".jsonl").to_string();
+                let project_dir = path.rsplit('/').nth(1).unwrap_or("").to_string();
+                sessions.push(SpriteClaudeSessionInfo {
+                    session_id,
+                    project_dir,
+                    jsonl_path: path.to_string(),
+                });
+            }
+        }
+    }
+    Ok(sessions)
+}
+
+/// List Claude agent teams on a sprite
+#[tauri::command]
+pub async fn sprite_list_teams(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpriteTeamInfo>, AppError> {
+    let client = state.get_sprites_client()?;
+    let result = client
+        .exec_http(
+            &name,
+            "for d in ~/.claude/teams/*/; do [ -f \"$d/config.json\" ] && echo \"$(basename $d)|$(cat $d/config.json 2>/dev/null)\"; done 2>/dev/null",
+        )
+        .await?;
+
+    let mut teams = Vec::new();
+    for line in result.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, '|').collect();
+        if parts.len() == 2 {
+            let team_name = parts[0].to_string();
+            let member_count = parts[1].matches("\"name\"").count() as u32;
+            teams.push(SpriteTeamInfo {
+                name: team_name,
+                member_count,
+            });
+        }
+    }
+    Ok(teams)
+}
+
+// ==========================================
+// WebSocket terminal
+// ==========================================
 
 /// Spawn an interactive WebSocket terminal to a sprite
 #[tauri::command]
@@ -154,136 +392,9 @@ pub async fn sprite_ws_kill(id: String, state: State<'_, AppState>) -> Result<()
     crate::sprites_ws::ws_kill(&id, &state.ws_state).await
 }
 
-/// List exec sessions running on a sprite.
-/// NOTE: Sprite VMs are always Linux, so Unix shell commands and path parsing
-/// with forward slashes are intentional here. This runs from any host OS.
-#[tauri::command]
-pub async fn sprite_list_sessions(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<SpriteSessionInfo>, AppError> {
-    let client = state.get_sprites_client()?;
-    let result = client
-        .exec_http(
-            &name,
-            "ps aux --no-headers 2>/dev/null | grep -v 'grep' | head -20 || echo ''",
-        )
-        .await?;
-    // Parse process list into session entries
-    let mut sessions = Vec::new();
-    for line in result.stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.splitn(11, char::is_whitespace).collect();
-        if parts.len() >= 11 {
-            let cmd = parts[10].to_string();
-            let pid = parts[1].to_string();
-            if cmd.contains("claude") || cmd.contains("node") || cmd.contains("bash") {
-                sessions.push(SpriteSessionInfo {
-                    pid,
-                    command: cmd,
-                    status: "running".to_string(),
-                });
-            }
-        }
-    }
-    Ok(sessions)
-}
-
-/// List Claude Code sessions found on a sprite
-#[tauri::command]
-pub async fn sprite_list_claude_sessions(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<SpriteClaudeSessionInfo>, AppError> {
-    let client = state.get_sprites_client()?;
-    let result = client
-        .exec_http(
-            &name,
-            "find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -20",
-        )
-        .await?;
-
-    let mut sessions = Vec::new();
-    for line in result.stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // Format: "1738000000.123 /root/.claude/projects/-home-devuser-MyProject/abc123.jsonl"
-        let parts: Vec<&str> = line.splitn(2, ' ').collect();
-        if parts.len() == 2 {
-            let path = parts[1];
-            // Extract project dir name and session id from path
-            if let Some(fname) = path.rsplit('/').next() {
-                let session_id = fname.trim_end_matches(".jsonl").to_string();
-                // Extract project path from parent directory name
-                let project_dir = path.rsplit('/').nth(1).unwrap_or("").to_string();
-                sessions.push(SpriteClaudeSessionInfo {
-                    session_id,
-                    project_dir,
-                    jsonl_path: path.to_string(),
-                });
-            }
-        }
-    }
-    Ok(sessions)
-}
-
-/// List Claude agent teams on a sprite
-#[tauri::command]
-pub async fn sprite_list_teams(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<SpriteTeamInfo>, AppError> {
-    let client = state.get_sprites_client()?;
-    let result = client
-        .exec_http(
-            &name,
-            "for d in ~/.claude/teams/*/; do [ -f \"$d/config.json\" ] && echo \"$(basename $d)|$(cat $d/config.json 2>/dev/null)\"; done 2>/dev/null",
-        )
-        .await?;
-
-    let mut teams = Vec::new();
-    for line in result.stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.splitn(2, '|').collect();
-        if parts.len() == 2 {
-            let team_name = parts[0].to_string();
-            let member_count = parts[1].matches("\"name\"").count() as u32;
-            teams.push(SpriteTeamInfo {
-                name: team_name,
-                member_count,
-            });
-        }
-    }
-    Ok(teams)
-}
-
-#[derive(Debug, Serialize)]
-pub struct SpriteSessionInfo {
-    pub pid: String,
-    pub command: String,
-    pub status: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SpriteClaudeSessionInfo {
-    pub session_id: String,
-    pub project_dir: String,
-    pub jsonl_path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SpriteTeamInfo {
-    pub name: String,
-    pub member_count: u32,
-}
+// ==========================================
+// Config
+// ==========================================
 
 /// Configure the Sprites API client from settings
 #[tauri::command]
@@ -294,7 +405,6 @@ pub async fn sprite_configure(
 ) -> Result<String, AppError> {
     state.set_sprites_client(base_url.clone(), token.clone());
 
-    // Test connection
     let client = state.get_sprites_client()?;
     client.test_connection().await
 }
