@@ -3,10 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import type { SpriteInfo } from '../../../types/sprite'
 
 interface ClaudeSession {
-  sessionId:   string
-  timestamp:   string
-  projectPath: string
-  summary?:    string
+  sessionId:    string
+  project:      string
+  firstMessage: string
+  timestamp:    number   // Unix ms
+  messageCount: number
 }
 
 export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
@@ -28,16 +29,38 @@ export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
         return
       }
 
-      const parsed: ClaudeSession[] = output
-        .split('\n')
-        .filter(line => line.trim())
-        .map(line => {
-          try { return JSON.parse(line) } catch { return null }
-        })
-        .filter(Boolean)
-        .reverse()
+      // Each line is a user message: {display, timestamp, project, sessionId}
+      // Aggregate by sessionId to build session list
+      const sessMap = new Map<string, ClaudeSession>()
 
-      setSessions(parsed)
+      for (const line of output.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const entry = JSON.parse(line)
+          const sid = entry.sessionId
+          if (!sid) continue
+
+          const existing = sessMap.get(sid)
+          if (!existing) {
+            sessMap.set(sid, {
+              sessionId:    sid,
+              project:      entry.project ?? '',
+              firstMessage: entry.display ?? '',
+              timestamp:    entry.timestamp ?? 0,
+              messageCount: 1,
+            })
+          } else {
+            existing.messageCount++
+            if ((entry.timestamp ?? 0) > existing.timestamp) {
+              existing.timestamp = entry.timestamp
+            }
+          }
+        } catch { /* skip malformed lines */ }
+      }
+
+      // Sort by most recent activity
+      const sorted = [...sessMap.values()].sort((a, b) => b.timestamp - a.timestamp)
+      setSessions(sorted)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -67,11 +90,14 @@ export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
         {sessions.map(sess => (
           <div key={sess.sessionId} className="p-2 rounded bg-zinc-800/50 hover:bg-zinc-800 transition-colors">
             <p className="text-xs text-zinc-300 truncate">
-              {sess.summary || <span className="text-zinc-500 italic">No summary</span>}
+              {sess.firstMessage || <span className="text-zinc-500 italic">No message</span>}
             </p>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs text-zinc-600 truncate font-mono">
-                {sess.projectPath?.replace('/home/user', '~').replace('/home/sprite', '~') ?? '—'}
+                {sess.project.replace('/home/sprite', '~').replace('/home/user', '~')}
+              </span>
+              <span className="text-xs text-zinc-700 shrink-0">
+                {sess.messageCount} msg{sess.messageCount !== 1 ? 's' : ''}
               </span>
               <span className="text-xs text-zinc-700 shrink-0">
                 {new Date(sess.timestamp).toLocaleDateString(undefined, {
