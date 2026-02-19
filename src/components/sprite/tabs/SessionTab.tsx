@@ -39,16 +39,27 @@ export function SessionTab({ sprite }: { sprite: SpriteInfo }) {
 
       <div className="space-y-1">
         {sessions.map(sess => {
-          const sid    = String(sess.id)
+          const sid    = String(typeof sess.id === 'object' ? JSON.stringify(sess.id) : sess.id)
           const killOp = getOp(`${name}:kill-${sid}`)
+          const active = sess.is_active ?? false
           return (
             <div key={sid} className="flex items-center gap-2 p-2 rounded bg-zinc-800/50 hover:bg-zinc-800 transition-colors group">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${sess.is_active ? 'bg-green-500' : 'bg-zinc-600'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-green-500' : 'bg-zinc-600'}`} />
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-zinc-300 truncate font-mono">{sess.command ?? '—'}</p>
-                {sess.workdir && <p className="text-xs text-zinc-600 truncate">{sess.workdir}</p>}
+                <div className="flex items-center gap-2 mt-0.5">
+                  {sess.workdir && (
+                    <span className="text-xs text-zinc-600 truncate">{sess.workdir}</span>
+                  )}
+                  {sess.last_activity && (
+                    <span className="text-xs text-zinc-700 shrink-0">
+                      active {new Date(sess.last_activity).toLocaleTimeString(undefined, { timeStyle: 'short' })}
+                    </span>
+                  )}
+                  {sess.tty && <span className="text-xs text-zinc-700 shrink-0">TTY</span>}
+                </div>
               </div>
-              {sess.is_active && (
+              {active && (
                 <button
                   onClick={() => handleKill(sid)}
                   disabled={killOp.loading}

@@ -33,10 +33,10 @@ export interface Checkpoint {
 // --- Exec session types ---
 
 export interface ExecSession {
-    id: number;
-    command: string;
-    is_active: boolean;
-    tty: boolean;
+    id: number | string;
+    command?: string;
+    is_active?: boolean;
+    tty?: boolean;
     created?: string;
     last_activity?: string;
     workdir?: string;

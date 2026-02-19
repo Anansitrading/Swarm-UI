@@ -583,8 +583,22 @@ impl SpritesClient {
             )));
         }
 
-        resp.json::<Vec<ExecSession>>()
+        // API returns {"count": N, "sessions": [...]}
+        #[derive(Deserialize)]
+        struct ExecSessionsResponse {
+            sessions: Vec<ExecSession>,
+        }
+
+        let body = resp
+            .text()
             .await
+            .map_err(|e| AppError::Internal(format!("exec sessions read error for '{name}': {e}")))?;
+
+        // Try wrapped format first, then bare array as fallback
+        if let Ok(wrapped) = serde_json::from_str::<ExecSessionsResponse>(&body) {
+            return Ok(wrapped.sessions);
+        }
+        serde_json::from_str::<Vec<ExecSession>>(&body)
             .map_err(|e| AppError::Internal(format!(
                 "exec sessions parse error for '{name}': {e}"
             )))
